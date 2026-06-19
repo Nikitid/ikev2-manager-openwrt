@@ -26,8 +26,11 @@ function sessionsByUser(sas) {
 			host: sa['remote-host'],
 			vips: sa['remote-vips'] || [],
 			established: sa.established,
-			bytesIn: bytesIn,
-			bytesOut: bytesOut
+			// strongSwan reports traffic relative to the router. For a remote
+			// VPN user, router bytes-out are downloaded by the client and
+			// router bytes-in are uploaded by the client.
+			bytesReceived: bytesOut,
+			bytesSent: bytesIn
 		});
 	});
 	return result;
@@ -158,18 +161,18 @@ return view.extend({
 								E('span', {
 									'class': 'ikev2-traffic received',
 									'title': _('Received'),
-									'aria-label': _('Received %s').format(common.formatBytes(session.bytesIn))
+									'aria-label': _('Received %s').format(common.formatBytes(session.bytesReceived))
 								}, [
 									common.icon('down'),
-									E('span', {}, [ common.formatBytes(session.bytesIn) ])
+									E('span', {}, [ common.formatBytes(session.bytesReceived) ])
 								]),
 								E('span', {
 									'class': 'ikev2-traffic sent',
 									'title': _('Sent'),
-									'aria-label': _('Sent %s').format(common.formatBytes(session.bytesOut))
+									'aria-label': _('Sent %s').format(common.formatBytes(session.bytesSent))
 								}, [
 									common.icon('up'),
-									E('span', {}, [ common.formatBytes(session.bytesOut) ])
+									E('span', {}, [ common.formatBytes(session.bytesSent) ])
 								])
 							])
 						]),

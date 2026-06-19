@@ -5,6 +5,8 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Corrected VPN-user traffic directions so download and upload are shown from
+  the remote user's perspective.
 - Switched the project license to the MIT License and added complete
   third-party domain-source documentation.
 - Stopped bundling the locally cached TikTok list; it is now fetched only
