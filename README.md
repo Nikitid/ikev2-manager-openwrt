@@ -11,6 +11,8 @@ the home WAN, while selected domains or devices use an IKEv2 gateway. If that
 tunnel goes down, policy-routed traffic fails closed instead of leaking through
 the normal WAN.
 
+Is this project compatible with [ikev2-manager-ubuntu](https://github.com/Nikitid/ikev2-manager-ubuntu)
+
 ## Features
 
 - outbound IPv4 IKEv2/EAP client on an XFRM interface;
