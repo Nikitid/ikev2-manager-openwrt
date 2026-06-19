@@ -24,9 +24,9 @@ packaged `dnsproxy`:
 | DNS over TCP | `tcp://host:53` |
 | DNS over TLS | `tls://hostname` |
 | DNS over HTTPS | `https://hostname/dns-query` |
-| DoH with HTTP/3 preferred | HTTPS endpoint plus `http3=1` |
-| DoH over HTTP/3 only | `h3://hostname/dns-query` |
-| DNS over QUIC | `quic://hostname` |
+| DoH with HTTP/3 preferred (experimental) | HTTPS endpoint plus `http3=1` |
+| DoH over HTTP/3 only (experimental) | `h3://hostname/dns-query` |
+| DNS over QUIC (experimental) | `quic://hostname` |
 | DNSCrypt | `sdns://...` stamp |
 
 Provider presets are conveniences, not an exhaustive directory. **Custom**
@@ -34,6 +34,10 @@ accepts one or more space-separated endpoints using the selected transport.
 The setting is router-wide. Connections from `dnsproxy` to public resolvers
 follow the router's normal default route; choosing a DNS transport does not
 route all DNS traffic through the IKEv2 tunnel.
+
+Standard DoH is the default because it works reliably over ordinary TCP/TLS.
+HTTP/3 and DoQ depend on UDP/QUIC path quality and kernel socket buffers, so
+they remain advanced experimental choices.
 
 ## Safety model
 

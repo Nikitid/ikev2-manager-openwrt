@@ -40,7 +40,7 @@ start() {
 
 	# IPv4-only tunnel: when the router has no IPv6 uplink, make global IPv6 fail
 	# fast at boot so dual-stack clients drop to IPv4 instead of hanging on a v6
-	# attempt that can't be routed (and would bypass the v4 kill-switch). Local
+	# attempt that can't be routed (and would bypass the IPv4 policy). Local
 	# IPv6 (link-local/ULA) keeps working via more-specific on-link routes.
 	if ! ip -6 route show default 2>/dev/null | grep -q .; then
 		ip -6 route replace unreachable default metric 2147483647 2>/dev/null || true

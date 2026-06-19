@@ -5,6 +5,16 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Simplified fail-closed routing to the native PBR unreachable default plus
+  XFRM policy enforcement, removing the duplicate nftables drop layer and
+  redundant PBR/firewall restarts.
+- Made strongSwan the sole owner of automatic outbound reconnects; health
+  monitoring now observes and repairs derived state without competing IKE
+  initiations.
+- Split detached-action and routing-invariant logic into reusable backend
+  modules, and fixed nftset discovery for the OpenWrt nft CLI.
+- Kept standard DoH as the default and marked HTTP/3/DoQ transports as
+  experimental.
 - Added opt-in DNS upstream management with provider presets for plain DNS,
   DoT, DoH, HTTP/3, DoQ and DNSCrypt, including live validation and rollback.
 - Corrected VPN-user traffic directions so download and upload are shown from

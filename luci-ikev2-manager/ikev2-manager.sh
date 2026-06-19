@@ -28,6 +28,9 @@ action_status_file="${IKEV2_ACTION_STATUS:-/var/run/ikev2-manager-action.status}
 action_status_dir="${IKEV2_ACTION_STATUS_DIR:-/var/run/ikev2-manager-actions}"
 action_lock_dir="${IKEV2_ACTION_LOCK:-/var/run/ikev2-action.lock}"
 action_lock_status="${IKEV2_ACTION_LOCK_STATUS:-/var/run/ikev2-action.lock.status}"
+runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-$root/usr/libexec/ikev2-manager.d}"
+
+. "$runtime_lib_dir/actions.sh"
 
 die() {
 	printf '%s\n' "$*" >&2
@@ -250,6 +253,7 @@ init_uci() {
 		uci set "$uci_config.dns.upstream=https://dns.cloudflare.com/dns-query"
 		uci set "$uci_config.dns.bootstrap=1.1.1.1:53 1.0.0.1:53"
 		uci set "$uci_config.dns.fallback="
+		uci set "$uci_config.dns.timeout=10s"
 	}
 
 	for assignment in \
@@ -951,7 +955,8 @@ overview() {
 			echo missing
 		fi
 	)"
-	printf 'killswitch=%s\n' "$(nft list ruleset 2>/dev/null | grep -q 'IKEv2 PBR kill-switch' && echo active || echo missing)"
+	printf 'killswitch=%s\n' "$(ip -4 route show table pbr_ikev2out 2>/dev/null |
+		grep -Eq '^unreachable default( |$)' && echo active || echo missing)"
 	printf 'inbound_firewall=%s\n' "$(nft list ruleset 2>/dev/null | grep -Eq 'udp dport.*500.*4500.*accept' && echo active || echo missing)"
 	printf 'mtproto=%s\n' "$([ -x /etc/init.d/tg-ws-proxy ] && /etc/init.d/tg-ws-proxy running && echo running || echo not-installed)"
 	printf 'mtproto_firewall=%s\n' "$(nft list ruleset 2>/dev/null | grep -Eq 'tcp dport 1443.*dnat' && echo active || echo missing)"
@@ -991,19 +996,6 @@ initiate_outbound() {
 	return 1
 }
 
-action_status() {
-	mkdir -p "$action_status_dir"
-	{
-		printf 'action_id=%s\n' "$1"
-		printf 'state=%s\n' "$2"
-		printf 'updated=%s\n' "$(date +%s)"
-		[ -z "${3:-}" ] || printf 'message=%s\n' "$3"
-	} >"$action_status_dir/$1.status.new"
-	mv "$action_status_dir/$1.status.new" "$action_status_dir/$1.status"
-	cp "$action_status_dir/$1.status" "${action_status_file}.new"
-	mv "${action_status_file}.new" "$action_status_file"
-}
-
 connect_action() {
 	swanctl_quiet --terminate --ike proxy-out --timeout 5 >/dev/null 2>&1 || :
 	if initiate_outbound; then
@@ -1040,28 +1032,6 @@ server_apply_action() {
 	/usr/libexec/ikev2-sync-vips || :
 	/usr/share/pbr/pbr.user.ikev2out || :
 	return 0
-}
-
-acquire_action_lock() {
-	owner="$1"
-	id="$2"
-	tries=0
-	while ! mkdir "$action_lock_dir" 2>/dev/null; do
-		updated="$(sed -n 's/^updated=//p' "$action_lock_status" 2>/dev/null | tail -1)"
-		pid="$(sed -n 's/^pid=//p' "$action_lock_status" 2>/dev/null | tail -1)"
-		now="$(date +%s)"
-		if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null ||
-		   { [ -n "$updated" ] && [ $((now - updated)) -gt 3600 ]; }; then
-			rm -f "$action_lock_status"
-			rmdir "$action_lock_dir" 2>/dev/null || :
-			continue
-		fi
-		tries=$((tries + 1))
-		[ "$tries" -lt 180 ] || return 1
-		sleep 1
-	done
-	printf 'owner=%s\naction_id=%s\npid=%s\nupdated=%s\n' \
-		"$owner" "$id" "$$" "$(date +%s)" >"$action_lock_status"
 }
 
 run_action() {
@@ -1140,23 +1110,6 @@ run_action() {
 			action_status "$id" error 'Unknown background action.'
 			;;
 	esac
-}
-
-start_action() {
-	kind="$1"
-	shift
-	id="$(date +%s)-$$"
-	find "$action_status_dir" -type f -mtime +7 -exec rm -f {} \; 2>/dev/null || :
-	action_status "$id" running 'Queued...'
-	if command -v start-stop-daemon >/dev/null 2>&1; then
-		if ! start-stop-daemon -b -q -S -x "$0" -- _action-run "$id" "$kind" "$@"; then
-			action_status "$id" error 'Unable to start background action.'
-			die 'Unable to start background action'
-		fi
-	else
-		setsid "$0" _action-run "$id" "$kind" "$@" </dev/null >/dev/null 2>&1 &
-	fi
-	printf 'action_id=%s\n' "$id"
 }
 
 case "${1:-}" in

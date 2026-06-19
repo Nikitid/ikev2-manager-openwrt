@@ -131,6 +131,7 @@ function checkRows(doctor) {
 		dnsproxy: _('Encrypted DNS proxy'),
 		pbr_service: _('PBR service'),
 		pbr_version: _('PBR version'),
+		failclosed_route: _('Fail-closed route'),
 		xfrm_module: _('XFRM interface module'),
 		xfrm_ifid_conflict: _('XFRM if_id conflict'),
 		xfrm_name_conflict: _('XFRM name conflict'),

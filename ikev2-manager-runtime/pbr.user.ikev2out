@@ -8,7 +8,7 @@ table_id="$(awk '$2 == "pbr_ikev2out" { print $1; exit }' /etc/iproute2/rt_table
 
 # Refill the domain set from the ikev2-health dump after a firewall/pbr
 # restart flushed it. Restore happens regardless of tunnel state: marked
-# traffic is held by the kill-switch instead of leaking unmarked to WAN.
+# traffic is held by the unreachable PBR default instead of leaking.
 # IPv4 only — the outbound tunnel and client PBR are v4-only.
 # This file is sourced by PBR, so variables are prefixed to avoid clashes.
 # PBR overrides the `nft` command while sourcing includes (it appends every
@@ -17,7 +17,7 @@ table_id="$(awk '$2 == "pbr_ikev2out" { print $1; exit }' /etc/iproute2/rt_table
 # same way PBR's own pbr.user.dnsprefetch example does.
 ikev2_nft='/usr/sbin/nft'
 ikev2_set="$(
-	"$ikev2_nft" list sets inet fw4 2>/dev/null |
+	"$ikev2_nft" list table inet fw4 2>/dev/null |
 		sed -n 's/^[[:space:]]*set \(pbr_ikev2out_4_dst_ip_[^[:space:]]*\) {.*/\1/p' |
 		grep -v '_user$' | head -n1
 )"

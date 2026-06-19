@@ -23,14 +23,22 @@ With the outbound client enabled:
 - `proxy4` is installed;
 - `/var/run/ikev2-vip4` contains the assigned virtual IP;
 - table `pbr_ikev2out` has a default route through `ipsec-out`;
-- the kill-switch rule is present in `inet fw4`.
+- table `pbr_ikev2out` also contains an unreachable default.
 
 With the client disconnected, the PBR table retains an unreachable default.
 Selected destinations should fail, not use WAN.
 
-The health service retries a missing `proxy4` CHILD_SA at most once per
-minute. If a rekey changes the assigned virtual IPv4, stale conntrack entries
-using the previous VIP are removed while ordinary WAN sessions are retained.
+The invariant can be tested without disconnecting traffic:
+
+```sh
+/usr/libexec/ikev2-manager-system failclosed-check
+```
+
+strongSwan owns reconnection through its CHILD_SA actions and retry interval.
+The health service observes state, synchronizes the virtual IP and repairs
+derived routing state without starting a competing IKE negotiation. If a rekey
+changes the assigned virtual IPv4, stale conntrack entries using the previous
+VIP are removed while ordinary WAN sessions are retained.
 
 ## Common commands
 
@@ -168,5 +176,4 @@ profiles. Store them as secrets.
 7. Enable the inbound server only after its certificate is valid.
 
 The application never needs a custom firewall4 template. Removing its named
-UCI sections and generated kill-switch file returns routing ownership to the
-base OpenWrt configuration.
+UCI sections returns routing ownership to the base OpenWrt configuration.

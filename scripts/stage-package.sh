@@ -36,6 +36,8 @@ install_file 644 openwrt/files/lib/upgrade/keep.d/ikev2-manager /lib/upgrade/kee
 
 install_file 755 luci-ikev2-manager/ikev2-manager.sh /usr/libexec/ikev2-manager
 install_file 755 ikev2-manager-runtime/ikev2-manager-system.sh /usr/libexec/ikev2-manager-system
+install_file 644 ikev2-manager-runtime/lib/actions.sh /usr/libexec/ikev2-manager.d/actions.sh
+install_file 644 ikev2-manager-runtime/lib/routing.sh /usr/libexec/ikev2-manager.d/routing.sh
 install_file 755 ikev2-manager-runtime/ikev2-health.sh /usr/libexec/ikev2-health
 install_file 755 ikev2-manager-runtime/ikev2-sync-vips.sh /usr/libexec/ikev2-sync-vips
 install_file 755 luci-ikev2-domains/community-domains.sh /usr/libexec/ikev2-domains-community
@@ -107,6 +109,11 @@ cat >"$stage/CONTROL/postinst" <<'EOF'
 rm -f /tmp/luci-indexcache
 rm -rf /tmp/luci-modulecache
 /etc/init.d/rpcd restart >/dev/null 2>&1 || true
+rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
+rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
+if [ "$(uci -q get ikev2-manager.globals.configured)" = 1 ]; then
+	fw4 -q reload >/dev/null 2>&1 || true
+fi
 if [ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || \
    [ "$(uci -q get ikev2-manager.client.enabled)" = 1 ] || \
    [ "$(uci -q get ikev2-manager.server.enabled)" = 1 ]; then

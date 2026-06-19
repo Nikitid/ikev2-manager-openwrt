@@ -12,9 +12,9 @@ var dnsProtocols = [
 	{ id: 'tcp', label: 'DNS over TCP' },
 	{ id: 'dot', label: 'DNS over TLS (DoT)' },
 	{ id: 'doh', label: 'DNS over HTTPS (DoH)' },
-	{ id: 'doh3', label: 'DoH with HTTP/3 preferred' },
-	{ id: 'h3', label: 'DoH over HTTP/3 only' },
-	{ id: 'doq', label: 'DNS over QUIC (DoQ)' },
+	{ id: 'doh3', label: 'DoH with HTTP/3 preferred — experimental' },
+	{ id: 'h3', label: 'DoH over HTTP/3 only — experimental' },
+	{ id: 'doq', label: 'DNS over QUIC (DoQ) — experimental' },
 	{ id: 'dnscrypt', label: 'DNSCrypt' }
 ];
 
@@ -531,7 +531,7 @@ return view.extend({
 					customMode ? common.pill(_('Override active'), 'warn') :
 						common.pill(_('Generated'), 'good')),
 				E('div', { 'class': 'ikev2-note warn' }, [
-					_('Disabling this client intentionally blocks selected domains. The kill-switch does not fall back to the home WAN.')
+					_('Disabling this client intentionally blocks selected domains. The fail-closed route does not fall back to the home WAN.')
 				])
 			])
 		]);

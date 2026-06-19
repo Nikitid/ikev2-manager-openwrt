@@ -52,7 +52,7 @@ Download the release `.ipk`, then install it in LuCI:
 System -> Software -> Upload Package
 ```
 
-Upload `luci-app-ikev2-manager_1.0.0-r2_all.ipk` and install it. The package is
+Upload `luci-app-ikev2-manager_1.0.0-r3_all.ipk` and install it. The package is
 safe to install from the web UI on a fresh supported system: it does not replace
 `dnsmasq`, start strongSwan, enable PBR or change firewall rules. Its package
 pre-install script rejects unsupported OpenWrt releases and vendor firmware.
@@ -106,13 +106,16 @@ Replacing dnsmasq briefly restarts DNS and DHCP. Existing
    **Outbound Tunnel -> DNS upstream**.
 8. Select services or domains in **Policy Routing**.
 9. Optionally configure ACME in LuCI, then enable **Inbound Server**.
+10. Choose inbound routes and access permissions.
+11. Add credentials under **VPN Users**.
 
 ## DNS upstream
 
 `dnsmasq-full` remains the LAN and VPN-client resolver because PBR uses its
 DNS answers to populate nftsets. It can forward public queries to a local
 `dnsproxy` instance, which supports UDP, TCP, DNS-over-TLS, DNS-over-HTTPS,
-DoH over HTTP/3, DNS-over-QUIC and DNSCrypt upstreams.
+DoH over HTTP/3, DNS-over-QUIC and DNSCrypt upstreams. Standard DoH is the
+default; QUIC-based transports are exposed as experimental options.
 
 The DNS block on the Outbound Tunnel page offers provider presets and a custom
 endpoint mode. Enabling managed DNS first saves the existing `dnsproxy` and
@@ -120,11 +123,11 @@ endpoint mode. Enabling managed DNS first saves the existing `dnsproxy` and
 failed test restores the previous resolver automatically. Selecting
 **Keep existing router DNS** restores the configuration captured before the
 application took ownership.
-9. Choose the inbound routes and access permissions under **Inbound Server**.
-10. Add credentials under **VPN Users**.
 
 The application owns only UCI sections prefixed `ikev2pbr_`, the
-`network.ikev2out` interface and the `pbr.ikev2pbr_*` sections.
+`network.ikev2out` interface and the `pbr.ikev2pbr_*` sections. Managed DNS
+additionally owns the documented `dnsproxy` and primary dnsmasq upstream
+settings while enabled.
 
 ## Domain-list sources
 

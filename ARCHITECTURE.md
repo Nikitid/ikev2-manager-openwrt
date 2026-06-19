@@ -35,11 +35,11 @@ The PBR table always contains an unreachable default route. A lower-metric
 default through `ipsec-out` is installed only while an outbound CHILD_SA and
 virtual IPv4 address exist.
 
-An nftables rule also drops packets carrying the mark assigned to
-`pbr_ikev2out` unless their output interface is `ipsec-out`. The runtime
-discovers both the mark and mask from PBR instead of assuming fixed values.
-A selected flow therefore cannot fall through to WAN during rekey, restart
-or gateway failure.
+This route is the routing kill-switch: when the tunnel route disappears,
+marked traffic terminates at `unreachable` and cannot fall through to the main
+WAN table. If a stale route briefly remains without a matching SA, the kernel
+XFRM policy drops the packet. Avoiding a duplicate nftables drop rule keeps PBR
+and firewall reloads independent and removes an unnecessary failure mode.
 
 ## XFRM separation
 
@@ -68,6 +68,10 @@ Managed DNS is opt-in. When enabled, the application also owns the
 upstream `server`/`noresolv` options of the primary dnsmasq instance. The
 pre-existing `dnsproxy` and `dhcp` UCI exports are retained under
 `/etc/ikev2-manager/dns-original/` and restored when managed DNS is disabled.
+
+Detached action status and routing invariant checks are small shared shell
+modules under `/usr/libexec/ikev2-manager.d/`. The public helper commands stay
+stable while implementation details remain testable in isolation.
 
 Disabling Base Setup removes the managed network, firewall and PBR sections
 but preserves tunnel settings, domain selections, users and certificates.

@@ -1,22 +1,13 @@
 #!/bin/sh
 
 status_file='/var/run/ikev2-health.status'
-reconnect_file='/var/run/ikev2-health.reconnect'
 
 has_proxy4() {
 	printf '%s' "$1" | grep -q 'name=proxy4[^{}]* state=INSTALLED'
 }
 
-try_reconnect() {
-	now="$(date +%s)"
-	last="$(cat "$reconnect_file" 2>/dev/null || echo 0)"
-	[ $((now - last)) -ge 60 ] || return 0
-	printf '%s\n' "$now" >"$reconnect_file"
-	swanctl --initiate --child proxy4 --timeout 15 >/dev/null 2>&1 || :
-}
-
 domain_set_name() {
-	nft list sets inet fw4 2>/dev/null |
+	nft list table inet fw4 2>/dev/null |
 		sed -n 's/^[[:space:]]*set \(pbr_ikev2out_4_dst_ip_[^[:space:]]*\) {.*/\1/p' |
 		grep -v '_user$' | head -n1
 }
@@ -56,13 +47,11 @@ while true; do
 		rm -f /var/run/ikev2-vip4
 		/usr/share/pbr/pbr.user.ikev2out || :
 		printf 'state=client-disabled updated=%s\n' "$(date +%s)" >"$status_file"
-	else
-		if ! has_proxy4 "$raw"; then
-			try_reconnect
-			raw="$(swanctl --list-sas --raw 2>/dev/null || true)"
-		fi
 	fi
 
+	# strongSwan owns reconnection through start_action, close_action,
+	# dpd_action and retry_initiate_interval. The health watcher only observes
+	# and repairs derived state, avoiding concurrent initiations.
 	if [ "$client_enabled" = 1 ] && has_proxy4 "$raw"; then
 		if /usr/libexec/ikev2-sync-vips &&
 			/usr/share/pbr/pbr.user.ikev2out; then
