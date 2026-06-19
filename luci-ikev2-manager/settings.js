@@ -28,6 +28,19 @@ function updateAcmeLine(st) {
 	pre.style.display = msg ? '' : 'none';
 }
 
+function disclosure(title, description, content, badges) {
+	return E('details', { 'class': 'ikev2-disclosure' }, [
+		E('summary', {}, [
+			E('span', { 'class': 'ikev2-disclosure-copy' }, [
+				E('strong', {}, [ title ]),
+				description ? E('span', {}, [ description ]) : ''
+			]),
+			badges ? E('span', { 'class': 'ikev2-disclosure-badges' }, badges) : ''
+		]),
+		E('div', { 'class': 'ikev2-disclosure-body' }, [ content ])
+	]);
+}
+
 return view.extend({
 	load: function() {
 		return L.resolveDefault(fs.stat('/usr/sbin/swanmon'), null).then(function(ready) {
@@ -270,7 +283,7 @@ return view.extend({
 		var acmeRequest = E('button', { 'class': 'cbi-button cbi-button-action' }, [
 			_('Request certificate') ]);
 
-		var dnsRows = E('div', { 'class': 'ikev2-form-grid' }, [
+		var dnsRows = E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
 			common.fieldLabel(_('DNS provider'),
 				_('acme.sh dns_* plugin. Timeweb needs TW_Token.')),
 			acmeProvider,
@@ -355,7 +368,8 @@ return view.extend({
 		});
 
 		var acmeStatusPill = acme.cert_present === '1' ?
-			common.pill(_('Certificate present') + (acme.cert_expiry ? ' · ' + acme.cert_expiry : ''), 'good') :
+			common.pill(_('Certificate present') +
+				(acme.cert_expiry ? ' · ' + common.formatDate(acme.cert_expiry) : ''), 'good') :
 			common.pill(_('No certificate'), 'bad');
 
 		// Reflect runtime reality, not just the UCI flag: an enabled server with no
@@ -365,7 +379,8 @@ return view.extend({
 		function updateServerPills() {
 			if (acme.cert_present === '1') {
 				common.setPill(acmeStatusPill,
-					_('Certificate present') + (acme.cert_expiry ? ' · ' + acme.cert_expiry : ''),
+					_('Certificate present') +
+						(acme.cert_expiry ? ' · ' + common.formatDate(acme.cert_expiry) : ''),
 					'good');
 			}
 			else {
@@ -401,123 +416,142 @@ return view.extend({
 		}
 		updateServerPills();
 
+		var accessPanel = disclosure(
+			_('Client routes and access'),
+			_('Choose what clients send through IKEv2 and where that traffic may go.'),
+			E('div', {}, [
+				E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+					common.fieldLabel(_('Advertised IPv4 destinations'),
+						_('Space-separated CIDRs. Use 0.0.0.0/0 for a full-tunnel client route.')),
+					localTs,
+					common.fieldLabel(_('Allow Internet'),
+						_('Permit forwarding to home WAN and the outbound IKEv2 policy path.')),
+					common.switchLabel(allowInternet),
+					common.fieldLabel(_('Allow internal networks'),
+						_('Permit forwarding to the LAN firewall zones listed below.')),
+					common.switchLabel(allowLan),
+					common.fieldLabel(_('Internal firewall zones')),
+					lanZones,
+					common.fieldLabel(_('Allow router itself'),
+						_('Allows router services on its LAN, VPN and public addresses. This also enables same-router public-IP loopback.')),
+					common.switchLabel(allowRouter),
+					common.fieldLabel(_('Allowed router ports'),
+						_('Optional TCP/UDP ports or ranges. Leave empty to allow all protocols and services.')),
+					routerPorts
+				]),
+				E('details', { 'class': 'ikev2-advanced' }, [
+					E('summary', {}, [ _('Firewall zone integration') ]),
+					E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+						common.fieldLabel(_('Inbound VPN zone')), firewallZone,
+						common.fieldLabel(_('Outbound IKEv2 zone')), outboundZone
+					])
+				])
+			])
+		);
+
+		var acmePanel = disclosure(
+			_('ACME certificate'),
+			_('Issue and renew the public certificate used by VPN clients.'),
+			E('div', {}, [
+				E('p', { 'class': 'ikev2-panel-note' }, [
+					_('The public identity above must be a DNS name pointing to this router.')
+				]),
+				E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+					common.fieldLabel(_('Account email'),
+						_('Used for the Let\'s Encrypt account and expiry notices.')),
+					acmeEmail,
+					common.fieldLabel(_('Challenge method'),
+						_('DNS-01 works behind NAT and without port 80. HTTP-01 needs inbound TCP 80 to this router.')),
+					acmeMethod
+				]),
+				dnsRows,
+				E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+					common.fieldLabel(_('Staging'),
+						_('Use the Let\'s Encrypt staging CA for testing (untrusted certs, no rate limits).')),
+					common.switchLabel(acmeStaging)
+				]),
+				E('pre', { 'id': 'ikev2-acme-status', 'class': 'ikev2-status-box', 'style': 'display:none' }, []),
+				E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1rem' }, [
+					acmeSave,
+					acmeRequest
+				])
+			]),
+			[
+				acmeStatusPill,
+				acme.cert_subject ? common.pill(acme.cert_subject, 'neutral') : ''
+			]
+		);
+
+		var behaviorPanel = disclosure(
+			_('Connection and advanced settings'),
+			_('Roaming behavior, timers, certificate paths and raw strongSwan configuration.'),
+			E('div', {}, [
+				E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+					common.fieldLabel(_('MOBIKE'),
+						_('Keeps the VPN session when a phone moves between Wi-Fi and mobile data.')),
+					common.switchLabel(mobike),
+					common.fieldLabel(_('IKE fragmentation'),
+						_('Avoids oversized IKE packets on constrained networks.')),
+					common.switchLabel(fragmentation),
+					common.fieldLabel(_('XFRM MTU')), mtu
+				]),
+				E('details', { 'class': 'ikev2-advanced' }, [
+					E('summary', {}, [ _('Advanced timers') ]),
+					E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+						common.fieldLabel(_('DPD interval')), dpd,
+						common.fieldLabel(_('IKE rekey')), ikeRekey,
+						common.fieldLabel(_('CHILD rekey')), childRekey
+					])
+				]),
+				E('details', { 'class': 'ikev2-advanced' }, [
+					E('summary', {}, [ _('Certificate paths') ]),
+					E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+						common.fieldLabel(_('ACME certificate directory')), certSource,
+						common.fieldLabel(_('Certificate file override')), certFile,
+						common.fieldLabel(_('Private key override')), keyFile
+					])
+				]),
+				E('details', { 'class': 'ikev2-advanced' }, [
+					E('summary', {}, [ _('Advanced strongSwan configuration') ]),
+					E('p', { 'class': 'ikev2-panel-note' }, [
+						_('Inspect the generated swanctl connection or replace it with a manually maintained profile.')
+					]),
+					rawPanel,
+					E('div', { 'class': 'ikev2-actions spread', 'style': 'margin-top:1rem' }, [
+						customMode ? common.pill(_('Override active'), 'warn') :
+							common.pill(_('Generated'), 'good'),
+						rawToggle
+					])
+				])
+			])
+		);
+
 		return E([
 			common.styles(),
 			E('div', { 'class': 'ikev2-page' }, [
 				common.header(_('Inbound VPN Server'),
 					_('Remote devices connect to the router over IKEv2. Routes advertised by strongSwan and firewall permissions are controlled independently.')),
 				common.section(_('Service'),
-					_('Configure the public identity, client pool and certificate used by remote devices.'),
-					E('div', { 'class': 'ikev2-form-grid' }, [
-						common.fieldLabel(_('Enable server'),
-							_('Listen on WAN UDP 500 and 4500.')),
-						common.switchLabel(enabled),
-						common.fieldLabel(_('Public identity')),
-						identity,
-						common.fieldLabel(_('Client IPv4 pool')),
-						pool4,
-						common.fieldLabel(_('Pool gateway'),
-							_('Router address and prefix assigned to ipsec-in.')),
-						gateway4,
-						common.fieldLabel(_('DNS for VPN clients')),
-						dns4,
-						common.fieldLabel(_('XFRM MTU')),
-						mtu
+					_('Configure the server identity and client address pool. Less common settings are grouped below.'),
+					E('div', {}, [
+						E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+							common.fieldLabel(_('Enable server'),
+								_('Listen on WAN UDP 500 and 4500.')),
+							common.switchLabel(enabled),
+							common.fieldLabel(_('Public identity')), identity,
+							common.fieldLabel(_('Client IPv4 pool')), pool4,
+							common.fieldLabel(_('Pool gateway'),
+								_('Router address and prefix assigned to ipsec-in.')),
+							gateway4,
+							common.fieldLabel(_('DNS for VPN clients')), dns4
+						]),
+						E('div', { 'class': 'ikev2-disclosure-stack' }, [
+							accessPanel,
+							acmePanel,
+							behaviorPanel
+						])
 					]),
 					serverStatusPill),
-				common.section(_('ACME certificate'),
-					_('Issue the public TLS certificate remote devices use to trust this server. The identity above must be a public DNS name pointing here.'),
-					E('div', {}, [
-						E('div', { 'class': 'ikev2-actions', 'style': 'margin-bottom:.7rem' }, [
-							acmeStatusPill,
-							acme.cert_subject ? common.pill(acme.cert_subject, 'neutral') : ''
-						]),
-						E('div', { 'class': 'ikev2-form-grid' }, [
-							common.fieldLabel(_('Account email'),
-								_('Used for the Let\'s Encrypt account and expiry notices.')),
-							acmeEmail,
-							common.fieldLabel(_('Challenge method'),
-								_('DNS-01 works behind NAT and without port 80. HTTP-01 needs inbound TCP 80 to this router.')),
-							acmeMethod
-						]),
-						dnsRows,
-						E('div', { 'class': 'ikev2-form-grid' }, [
-							common.fieldLabel(_('Staging'),
-								_('Use the Let\'s Encrypt staging CA for testing (untrusted certs, no rate limits).')),
-							common.switchLabel(acmeStaging)
-						]),
-						E('pre', { 'id': 'ikev2-acme-status', 'class': 'ikev2-status-box', 'style': 'display:none' }, []),
-						E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:.9rem' }, [
-							acmeSave,
-							acmeRequest
-						])
-					])),
-				common.section(_('Client routes and access'),
-					_('Traffic selectors decide what clients send into IKEv2. The switches decide what firewall4 permits after it arrives.'),
-					E('div', {}, [
-						E('div', { 'class': 'ikev2-form-grid' }, [
-							common.fieldLabel(_('Advertised IPv4 destinations'),
-								_('Space-separated CIDRs. Use 0.0.0.0/0 for a full-tunnel client route.')),
-							localTs,
-							common.fieldLabel(_('Allow Internet'),
-								_('Permit forwarding to home WAN and the outbound IKEv2 policy path.')),
-							common.switchLabel(allowInternet),
-							common.fieldLabel(_('Allow internal networks'),
-								_('Permit forwarding to the LAN firewall zones listed below.')),
-							common.switchLabel(allowLan),
-							common.fieldLabel(_('Internal firewall zones')),
-							lanZones,
-							common.fieldLabel(_('Allow router itself'),
-								_('Allows router services on its LAN, VPN and public addresses. This also enables same-router public-IP loopback.')),
-							common.switchLabel(allowRouter),
-							common.fieldLabel(_('Allowed router ports'),
-								_('Optional TCP/UDP ports or ranges. Leave empty to allow all protocols and services.')),
-							routerPorts
-						]),
-						E('details', { 'class': 'ikev2-advanced' }, [
-							E('summary', {}, [ _('Firewall zone integration') ]),
-							E('div', { 'class': 'ikev2-form-grid' }, [
-								common.fieldLabel(_('Inbound VPN zone')),
-								firewallZone,
-								common.fieldLabel(_('Outbound IKEv2 zone')),
-								outboundZone
-							])
-						])
-					])),
-				common.section(_('Connection behavior'),
-					_('The defaults are tuned for phones roaming between Wi-Fi and mobile networks.'),
-					E('div', {}, [
-						E('div', { 'class': 'ikev2-form-grid' }, [
-							common.fieldLabel(_('MOBIKE')),
-							common.switchLabel(mobike),
-							common.fieldLabel(_('IKE fragmentation')),
-							common.switchLabel(fragmentation)
-						]),
-						E('details', { 'class': 'ikev2-advanced' }, [
-							E('summary', {}, [ _('Advanced timers') ]),
-							E('div', { 'class': 'ikev2-form-grid' }, [
-								common.fieldLabel(_('DPD interval')), dpd,
-								common.fieldLabel(_('IKE rekey')), ikeRekey,
-								common.fieldLabel(_('CHILD rekey')), childRekey
-							])
-						]),
-						E('details', { 'class': 'ikev2-advanced' }, [
-							E('summary', {}, [ _('Certificate paths') ]),
-							E('div', { 'class': 'ikev2-form-grid' }, [
-								common.fieldLabel(_('ACME certificate directory')), certSource,
-								common.fieldLabel(_('Certificate file override')), certFile,
-								common.fieldLabel(_('Private key override')), keyFile
-							])
-						])
-					])),
-				common.section(_('Advanced strongSwan configuration'),
-					_('Inspect the generated swanctl connection or replace it with a manually maintained profile.'),
-					E('div', {}, [
-						rawPanel,
-						E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1rem' }, [ rawToggle ])
-					]),
-					customMode ? common.pill(_('Override active'), 'warn') :
-						common.pill(_('Generated'), 'good')),
 				E('div', { 'class': 'ikev2-actions end ikev2-save-bar' }, [
 					serverResult.node,
 					save

@@ -27,7 +27,7 @@ Validation on one target does not imply support for every router. New targets
 should be added only after the same release gate passes and the result is
 recorded without private router data.
 
-## 1.0.0-r1 evidence
+## 1.0.0-r3 evidence
 
 - public compatibility preflight: pass;
 - complete `opkg --noaction` dependency plan: pass;
@@ -36,4 +36,7 @@ recorded without private router data.
 - old package and helper removed; new package, helper and LuCI paths installed;
 - outbound SA, virtual IPv4, PBR service and fw4 forwarding remained healthy;
 - inbound certificate and connection remained loaded;
+- native fail-closed route self-test: pass;
+- managed Cloudflare DoH lookup: pass;
+- two simultaneous established IKEv2 SAs after upgrade: pass;
 - deterministic package build: pass.

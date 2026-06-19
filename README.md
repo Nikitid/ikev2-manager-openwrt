@@ -3,218 +3,168 @@
 [![CI](https://github.com/nikitid/ikev2-manager-openwrt/actions/workflows/ci.yml/badge.svg)](https://github.com/nikitid/ikev2-manager-openwrt/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-The OpenWrt companion to **IKEv2 Manager** for Ubuntu servers.
+A LuCI application for running an outbound IKEv2 tunnel, an optional inbound
+IKEv2 server and domain-based policy routing on OpenWrt.
 
-An installable LuCI application for:
+The project is designed for one practical setup: ordinary traffic keeps using
+the home WAN, while selected domains or devices use an IKEv2 gateway. If that
+tunnel goes down, policy-routed traffic fails closed instead of leaking through
+the normal WAN.
 
-- an outbound IPv4 IKEv2/EAP client on an XFRM interface;
-- domain-based policy routing through that tunnel;
-- fail-closed routing when the tunnel is unavailable;
-- per-device domain, full-tunnel and direct-WAN modes;
-- an optional inbound IKEv2/EAP server;
-- independent inbound access controls for Internet, internal zones and router
-  services;
-- VPN user and session management;
-- certificate, tunnel and traffic monitoring;
-- inbound server self-healing after partial reloads or certificate drift;
-- conditional IPv6 fail-fast for IPv4-only VPN policy routing;
-- Russian and English application interfaces;
-- optional raw strongSwan overrides for both tunnel profiles.
+## Features
 
-The package targets official OpenWrt 24.10.x with firewall4 and PBR 1.2.x.
-Compatibility is capability-based rather than model-based: firmware source,
-target, architecture, kernel ABI, package feeds, storage, memory and reserved
-XFRM resources are checked before managed routing can be enabled.
+- outbound IPv4 IKEv2/EAP client on an XFRM interface;
+- domain-based routing through PBR and `dnsmasq-full` nftsets;
+- full-tunnel and direct-WAN overrides for individual devices;
+- fail-closed routing when the outbound tunnel is unavailable;
+- optional inbound IKEv2/EAP server for phones and other remote devices;
+- separate inbound permissions for Internet, local networks and router services;
+- VPN user, session and traffic management;
+- selectable DNS upstreams through `dnsproxy`:
+  UDP, TCP, DoT, DoH, HTTP/3, DoQ and DNSCrypt;
+- ACME certificate management;
+- Russian and English interfaces;
+- compatibility checks, rollback paths and diagnostics in LuCI.
 
-## Installation behavior
+## Requirements
 
-Installing the package does **not** create firewall or PBR policies and does
-not connect either tunnel. The release IPK is a LuCI/bootstrap package: it
-installs the UI, helper scripts and an inactive UCI configuration with
-`configured=0`. Runtime dependencies such as PBR, strongSwan and
-`dnsmasq-full` and `dnsproxy` are checked and installed from the setup flow
-before activation.
+- official OpenWrt `24.10.x`;
+- firewall4;
+- official OpenWrt package feeds;
+- enough storage for strongSwan, PBR, `dnsmasq-full` and optional `dnsproxy`.
 
-After installation open:
+Vendor firmware, snapshots and OpenWrt 25.12+ are currently rejected. Hardware
+support is checked by capabilities rather than by a fixed router-model list.
+See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-```text
-LuCI -> Services -> IKEv2 Manager for OpenWrt -> Overview
-```
+## Installation
 
-Review the OpenWrt network names and firewall zones, then explicitly enable
-the managed configuration.
-
-## Install a release
-
-Download the release `.ipk`, then install it in LuCI:
+Download `luci-app-ikev2-manager_1.0.0-r3_all.ipk` from the GitHub release and
+install it through:
 
 ```text
 System -> Software -> Upload Package
 ```
 
-Upload `luci-app-ikev2-manager_1.0.0-r3_all.ipk` and install it. The package is
-safe to install from the web UI on a fresh supported system: it does not replace
-`dnsmasq`, start strongSwan, enable PBR or change firewall rules. Its package
-pre-install script rejects unsupported OpenWrt releases and vendor firmware.
+Installing the IPK is intentionally passive. It adds the LuCI application and
+helper scripts, but does not enable VPN services, replace `dnsmasq` or change
+firewall and PBR rules.
 
-If the pre-public `luci-app-ikev2-pbr` package is installed, use
-`scripts/install.sh` for the one-time package-name migration.
+Then open:
 
-For CLI installation, upload the `.ipk` and optional installer to `/tmp`, then
-run:
-
-```sh
-chmod +x /tmp/install.sh
-/tmp/install.sh /tmp/luci-app-ikev2-manager_*_all.ipk
+```text
+Services -> IKEv2 Manager for OpenWrt -> Overview
 ```
 
-The installer:
+The Overview page checks the router, installs the required runtime packages
+only after confirmation and enables managed routing only when you explicitly
+turn it on.
 
-1. verifies OpenWrt 24.10.x;
-2. creates a sysupgrade backup in `/tmp`;
-3. replaces `dnsmasq` with `dnsmasq-full` when required;
-4. installs the package and dependencies through the same setup helper used by LuCI;
-5. leaves VPN and policy routing disabled.
+For command-line installation and migration from the pre-public
+`luci-app-ikev2-pbr` package, see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-The package does not enable its init services during installation. They are
-enabled only after Overview is explicitly activated in LuCI.
+## First setup
 
-Existing manually configured installations can be adopted after taking a
-backup:
+1. Open **Overview** and install the runtime dependencies.
+2. Select the WAN and router networks managed by the application.
+3. Enable managed mode.
+4. Configure and connect the **Outbound Tunnel**.
+5. Select services or enter domains under **Policy Routing**.
+6. Optionally configure the **Inbound Server**, ACME and VPN users.
 
-```sh
-/usr/libexec/ikev2-manager-system adopt-legacy
-```
+The application owns only UCI sections and interfaces created with its
+`ikev2pbr_` naming. Disabling managed mode removes those generated sections but
+keeps tunnel settings, users and domain lists.
 
-The command removes the known legacy firewall/PBR sections, recreates them as
-application-owned `ikev2pbr_*` sections, checks firewall4 and keeps a rollback
-snapshot under `/etc/ikev2-manager/backups/`.
+## DNS and domain routing
 
-Replacing dnsmasq briefly restarts DNS and DHCP. Existing
-`/etc/config/dhcp` is preserved.
+`dnsmasq-full` remains the resolver for LAN and inbound VPN clients because PBR
+uses its DNS answers to populate nftsets. Optional managed DNS forwards public
+queries to a local `dnsproxy` instance.
 
-## Initial configuration
+Standard DoH is the default encrypted transport. HTTP/3 and DoQ options are
+available but marked experimental because their behavior depends more heavily
+on firmware, network path and UDP buffer limits.
 
-1. Open **Overview**.
-2. Confirm the WAN network.
-3. Select the router networks whose domains should use IKEv2. Firewall zones
-   are detected automatically. Inbound VPN clients can be included separately.
-4. Use **Install runtime dependencies** if the readiness check reports missing packages.
-5. Save and enable the managed configuration.
-6. Configure **Outbound Tunnel** and connect it.
-7. Optionally choose the router DNS transport and provider under
-   **Outbound Tunnel -> DNS upstream**.
-8. Select services or domains in **Policy Routing**.
-9. Optionally configure ACME in LuCI, then enable **Inbound Server**.
-10. Choose inbound routes and access permissions.
-11. Add credentials under **VPN Users**.
+DNS changes are tested before they are accepted. If validation fails, the
+previous resolver configuration is restored automatically.
 
-## DNS upstream
+Clients must use the router resolver for deterministic domain classification.
+Browser DoH, Android Private DNS and Apple Private Relay can bypass this model.
 
-`dnsmasq-full` remains the LAN and VPN-client resolver because PBR uses its
-DNS answers to populate nftsets. It can forward public queries to a local
-`dnsproxy` instance, which supports UDP, TCP, DNS-over-TLS, DNS-over-HTTPS,
-DoH over HTTP/3, DNS-over-QUIC and DNSCrypt upstreams. Standard DoH is the
-default; QUIC-based transports are exposed as experimental options.
-
-The DNS block on the Outbound Tunnel page offers provider presets and a custom
-endpoint mode. Enabling managed DNS first saves the existing `dnsproxy` and
-`dhcp` UCI configuration. Every change is applied with a live lookup test; a
-failed test restores the previous resolver automatically. Selecting
-**Keep existing router DNS** restores the configuration captured before the
-application took ownership.
-
-The application owns only UCI sections prefixed `ikev2pbr_`, the
-`network.ikev2out` interface and the `pbr.ikev2pbr_*` sections. Managed DNS
-additionally owns the documented `dnsproxy` and primary dnsmasq upstream
-settings while enabled.
+More details: [docs/DNS.md](docs/DNS.md).
 
 ## Domain-list sources
 
-The Policy Routing page includes small project-maintained service lists and an
-optional integration with
+The package contains small project-maintained service lists. It can also
+download selected lists at runtime from
 [`itdoginfo/allow-domains`](https://github.com/itdoginfo/allow-domains).
-Selected external lists are downloaded by the router at runtime; they are not
-embedded in this package. Downloads are normalized, cached and merged
-atomically. If an update fails, the previous active policy remains in place.
 
-The upstream repository currently does not publish a license file. This
-project therefore does not redistribute its domain-list contents and makes no
-claim that they are covered by this project's MIT license. See
-[docs/DOMAIN_SOURCES.md](docs/DOMAIN_SOURCES.md) and [NOTICE](NOTICE).
+External lists are not copied into this repository or its IPK. The upstream
+repository does not currently publish a license, so its content is not covered
+by this project's MIT license. Downloads are optional, validated, cached and
+applied atomically; the previous active policy remains in place after a failed
+update.
 
-## Build
+See [docs/DOMAIN_SOURCES.md](docs/DOMAIN_SOURCES.md) and [NOTICE](NOTICE).
 
-The release package is assembled by `scripts/build-ipk.sh`, which stages the
-tree and packs it with `scripts/pack-ipk.py` (a macOS-safe `opkg` packer that
-avoids the PAX headers busybox `tar` cannot read). It contains only
-architecture-independent scripts, UCI defaults and LuCI assets:
+## Safety model
+
+- fresh installation is inactive by default;
+- unsupported firmware is rejected before runtime changes;
+- dependency replacement creates a recovery backup;
+- generated routing is fail-closed;
+- configuration updates are validated before service reloads;
+- long operations run as serialized background jobs with visible status;
+- VPN and ACME secrets are passed through permission-restricted temporary files,
+  not command-line arguments;
+- router backups still contain reversible VPN credentials and private keys and
+  must be treated as secrets.
+
+The application cannot protect traffic that bypasses router DNS, and it does
+not configure the remote IKEv2 gateway.
+
+## Build and validation
+
+The canonical build works on macOS and Linux:
 
 ```sh
-./scripts/build-ipk.sh
+./scripts/ci-check.sh
 ```
 
-The resulting architecture-independent package and checksum are written to
-`dist/`.
+It validates the public tree, versions, shell and JavaScript syntax, runtime
+modules, JSON metadata and deterministic IPK output. GitHub CI additionally
+runs ShellCheck, actionlint and Gitleaks.
 
-### Repository layout
+Artifacts are written to `dist/`:
 
-- `luci-ikev2-manager/` — Overview, tunnel and user-management LuCI views;
-- `luci-ikev2-domains/` — domain-policy editor, service lists and helpers;
-- `ikev2-manager-runtime/` — router services, hooks and runtime controller;
-- `openwrt/files/` — package-owned configuration and sysupgrade keep files;
-- `scripts/` — validation, staging, installation and release tooling.
+```text
+luci-app-ikev2-manager_1.0.0-r3_all.ipk
+SHA256SUMS
+```
 
-`scripts/build-ipk.sh` is the **canonical** build: it runs on macOS and Linux
-and side-steps a historical
-breakage where packing on macOS with the system `tar` (bsdtar/libarchive)
-emitted PAX headers that busybox `opkg` rejects
-(`Unknown typeflag: 0x78` → `Malformed package file`). That risk only returns
-if the IPK is packed with raw `tar`; the canonical packer uses Python's GNU
-tar format and is safe.
+The custom packer uses deterministic GNU tar archives so the resulting IPK is
+accepted by BusyBox `opkg` even when built on macOS.
 
-Package identity (name/version/release/arch) lives in `release.env`, the single
-source of truth the canonical build reads. The OpenWrt SDK `Makefile` is a
-**secondary** build (Linux/SDK only — it is not run in the macOS workflow). It
-keeps its own `PKG_*` literals because OpenWrt's relative include path is
-unreliable; `scripts/check-version-sync.sh` (run automatically by
-`build-ipk.sh`) fails the build if those literals drift from `release.env`.
-To cut a new release, edit `release.env` and the Makefile `PKG_VERSION`/
-`PKG_RELEASE` together.
+## Documentation
 
-## Important limitations
+- [Architecture](ARCHITECTURE.md)
+- [Compatibility](docs/COMPATIBILITY.md)
+- [Deployment](docs/DEPLOYMENT.md)
+- [DNS](docs/DNS.md)
+- [Operations and recovery](docs/OPERATIONS.md)
+- [Validation](docs/VALIDATION.md)
+- [Publishing checklist](docs/PUBLISHING.md)
+- [Security policy](SECURITY.md)
 
-- Domain routing is IPv4-only.
-- When no IPv6 WAN default route exists, managed mode installs an unreachable
-  global IPv6 route so dual-stack clients fail fast to IPv4 instead of bypassing
-  or hanging. Local link-local and ULA IPv6 remain available.
-- Clients must use the router DNS resolver for deterministic classification.
-- Browser DoH, Android Private DNS and Apple Private Relay can bypass it.
-- The outbound gateway must support IKEv2, EAP-MSCHAPv2, virtual IPv4 and the
-  configured cryptographic profile.
-- VPN passwords are write-only in LuCI, but strongSwan requires reversible
-  local secrets for EAP-MSCHAPv2. Router backups therefore contain secrets.
-- Raw strongSwan overrides bypass the form generator. The application
-  validates and loads them, but their semantics remain the administrator's
-  responsibility.
-- This package does not configure the remote IKEv2 gateway.
+## Release
 
-## Public release status
-
-`1.0.0-r1` is the first public package identity. Unsupported firmware is
-rejected before installation or activation, dependency availability is checked
-with `opkg --noaction` before DNS is touched, and both `dnsmasq` packages are
-downloaded before replacement so the original resolver can be restored locally.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md),
-[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md),
-[docs/DNS.md](docs/DNS.md),
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
-[docs/VALIDATION.md](docs/VALIDATION.md) and
-[docs/OPERATIONS.md](docs/OPERATIONS.md).
+`1.0.0-r3` is the first public release. The application version follows
+semantic versioning; the `-rN` suffix is the OpenWrt package revision.
 
 ## License
 
-The application source code is licensed under the MIT License. Optional
-third-party domain lists downloaded at runtime are not covered by that license;
-see [NOTICE](NOTICE).
+Project source code and project-maintained domain lists are available under the
+[MIT License](LICENSE). Optional third-party lists downloaded at runtime are
+covered separately in [NOTICE](NOTICE).

@@ -57,13 +57,15 @@ var ru = {
 	'Unable to save: %s': 'Не удалось сохранить: %s',
 	'Broad — may also route unrelated sites': 'Широкий — может вести и посторонние сайты',
 	'ACME certificate': 'Сертификат ACME',
+	'Issue and renew the public certificate used by VPN clients.': 'Выпуск и обновление публичного сертификата для VPN-клиентов.',
+	'The public identity above must be a DNS name pointing to this router.': 'Публичное имя выше должно быть DNS-именем, указывающим на этот роутер.',
 	'ACME settings rejected': 'Настройки ACME отклонены',
 	'ACME settings saved.': 'Настройки ACME сохранены.',
 	'Account email': 'Электронная почта',
 	'Applied': 'Применено',
 	'Available after runtime dependencies are installed.': 'Станет доступно после установки системных компонентов.',
 	'Certificate issued.': 'Сертификат выпущен.',
-	'Certificate present': 'Сертификат есть',
+	'Certificate present': 'Сертификат действует',
 	'Certificate request failed.': 'Не удалось выпустить сертификат.',
 	'Challenge method': 'Метод проверки',
 	'Creates and owns routing, firewall and PBR on the router.': 'Создаёт и обслуживает правила маршрутизации, межсетевого экрана и PBR.',
@@ -75,15 +77,15 @@ var ru = {
 	'For Timeweb just paste the API token. Multi-field providers: one VAR="value" per line.': 'Для Timeweb просто вставьте API-токен. Многополевые провайдеры: по одной VAR="value" в строке.',
 	'HTTP-01 (standalone, needs inbound port 80)': 'HTTP-01 (автономный режим, нужен входящий порт 80)',
 	'Issue the public TLS certificate remote devices use to trust this server. The identity above must be a public DNS name pointing here.': 'Выпустите публичный TLS-сертификат, которым удалённые устройства доверяют этому серверу. Идентичность выше должна быть публичным DNS-именем, указывающим сюда.',
-	'No certificate': 'Нет сертификата',
+	'No certificate': 'Сертификата нет',
 	'Paste your API token here': 'Вставьте сюда API-токен',
-	'Provider credentials': 'Учётные данные провайдера',
+	'Provider credentials': 'Данные DNS-провайдера',
 	'Request certificate': 'Запросить сертификат',
 	'Requesting...': 'Запрос...',
 	'Save ACME settings': 'Сохранить настройки ACME',
 	'Save server': 'Сохранить сервер',
 	'Saving settings...': 'Сохранение настроек...',
-	'Staging': 'Staging',
+	'Staging': 'Тестовый центр',
 	'Still running. Reload the page in a minute to see the result.': 'Ещё выполняется. Обновите страницу через минуту, чтобы увидеть результат.',
 	'Stored — leave empty to keep, or paste to replace': 'Сохранено — оставьте пустым чтобы сохранить, или вставьте чтобы заменить',
 	'Use the Let\'s Encrypt staging CA for testing (untrusted certs, no rate limits).': 'Использовать тестовый центр Let\'s Encrypt (сертификаты не доверенные, строгих лимитов нет).',
@@ -333,14 +335,16 @@ var ru = {
 	'Disabled': 'Выключено',
 	'Service': 'VPN-сервер',
 	'Configure the public identity, client pool and certificate used by remote devices.': 'Настройте публичное имя сервера, пул адресов и сертификат для удалённых устройств.',
+	'Configure the server identity and client address pool. Less common settings are grouped below.': 'Настройте имя сервера и пул адресов клиентов. Остальные параметры сгруппированы ниже.',
 	'Enable server': 'Включить сервер',
 	'Listen on WAN UDP 500 and 4500.': 'Слушать WAN UDP 500 и 4500.',
-	'Public identity': 'Публичное имя сервера',
+	'Public identity': 'Доменное имя сервера',
 	'Client IPv4 pool': 'IPv4-пул клиентов',
 	'Pool gateway': 'Шлюз пула',
 	'Router address and prefix assigned to ipsec-in.': 'Адрес роутера и префикс, назначаемые ipsec-in.',
 	'DNS for VPN clients': 'DNS для VPN-клиентов',
 	'Client routes and access': 'Маршруты и доступ клиентов',
+	'Choose what clients send through IKEv2 and where that traffic may go.': 'Выберите, какой трафик клиенты отправляют в IKEv2 и куда ему разрешён доступ.',
 	'Traffic selectors decide what clients send into IKEv2. The switches decide what firewall4 permits after it arrives.': 'Список сетей определяет, какой трафик клиенты отправляют в IKEv2. Переключатели ниже задают разрешённые направления.',
 	'Advertised IPv4 destinations': 'Доступные клиентам IPv4-сети',
 	'Space-separated CIDRs. Use 0.0.0.0/0 for a full-tunnel client route.': 'Укажите CIDR через пробел. Значение 0.0.0.0/0 направляет через VPN весь IPv4-трафик клиента.',
@@ -351,10 +355,14 @@ var ru = {
 	'Internal firewall zones': 'Зоны локальных сетей',
 	'Allow router itself': 'Разрешить сам роутер',
 	'Allows router services on its LAN, VPN and public addresses. This also enables same-router public-IP loopback.': 'Разрешает доступ к службам роутера по его локальным, VPN- и публичным адресам.',
-	'Allowed router ports': 'Разрешенные порты роутера',
+	'Allowed router ports': 'Разрешённые порты роутера',
 	'Optional TCP/UDP ports or ranges. Leave empty to allow all protocols and services.': 'Опциональные TCP/UDP порты или диапазоны. Пусто означает разрешить все протоколы и сервисы.',
 	'Connection behavior': 'Поведение подключения',
 	'The defaults are tuned for phones roaming between Wi-Fi and mobile networks.': 'Значения по умолчанию настроены для телефонов, переходящих между Wi-Fi и мобильной сетью.',
+	'Connection and advanced settings': 'Подключение и дополнительные параметры',
+	'Roaming behavior, timers, certificate paths and raw strongSwan configuration.': 'Роуминг, таймеры, пути сертификатов и ручная конфигурация strongSwan.',
+	'Keeps the VPN session when a phone moves between Wi-Fi and mobile data.': 'Сохраняет VPN-сессию при переходе телефона между Wi-Fi и мобильной сетью.',
+	'Avoids oversized IKE packets on constrained networks.': 'Предотвращает проблемы с крупными IKE-пакетами в сетях с ограничениями.',
 	'Firewall zone integration': 'Интеграция с зонами межсетевого экрана',
 	'Inbound VPN zone': 'Зона входящего VPN',
 	'Outbound IKEv2 zone': 'Зона исходящего IKEv2',
@@ -645,7 +653,7 @@ function formatDate(value) {
 	var date = new Date(value);
 	if (isNaN(date.getTime()))
 		return value || _('Unknown');
-	return new Intl.DateTimeFormat(undefined, {
+	return new Intl.DateTimeFormat(defaultLanguage() === 'ru' ? 'ru-RU' : 'en-US', {
 		year: 'numeric',
 		month: 'short',
 		day: 'numeric'
@@ -1186,6 +1194,18 @@ function styles() {
 			.ikev2-form-grid input[type="text"],
 			.ikev2-form-grid input[type="password"],
 			.ikev2-form-grid input[type="number"] { width: 100%; max-width: 34rem; }
+			.ikev2-form-grid textarea,
+			.ikev2-form-grid select { width: 100%; max-width: 34rem; }
+			.ikev2-form-grid-compact {
+				grid-template-columns: minmax(13rem, 19rem) minmax(0, 1fr);
+				align-items: start;
+			}
+			.ikev2-form-grid-compact > .ikev2-field-label { padding-top: .48rem; }
+			.ikev2-form-grid-compact input[type="text"],
+			.ikev2-form-grid-compact input[type="password"],
+			.ikev2-form-grid-compact input[type="number"],
+			.ikev2-form-grid-compact select,
+			.ikev2-form-grid-compact textarea { max-width: none; }
 			.ikev2-page input:focus,
 			.ikev2-page select:focus,
 			.ikev2-page textarea:focus {
@@ -1365,6 +1385,67 @@ function styles() {
 				transition: transform .15s ease;
 			}
 			.ikev2-advanced[open] summary::before { transform: rotate(90deg); }
+
+			/* ── Nested settings disclosures ───────────────────────── */
+			.ikev2-disclosure-stack {
+				display: grid;
+				gap: .7rem;
+				margin-top: 1.2rem;
+			}
+			.ikev2-disclosure {
+				border: 1px solid var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				background: color-mix(in srgb, var(--ikev2-surface-2) 70%, transparent);
+				overflow: hidden;
+			}
+			.ikev2-disclosure > summary {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 1rem;
+				padding: .9rem 1rem;
+				cursor: pointer;
+				list-style: none;
+			}
+			.ikev2-disclosure > summary::-webkit-details-marker { display: none; }
+			.ikev2-disclosure > summary::before {
+				content: "\\203A";
+				flex: none;
+				font-size: 1.35rem;
+				line-height: 1;
+				transition: transform .15s ease;
+			}
+			.ikev2-disclosure[open] > summary::before { transform: rotate(90deg); }
+			.ikev2-disclosure-copy {
+				display: flex;
+				flex: 1;
+				flex-direction: column;
+				gap: .18rem;
+				min-width: 0;
+			}
+			.ikev2-disclosure-copy strong { font-weight: 680; }
+			.ikev2-disclosure-copy > span {
+				color: var(--ikev2-muted);
+				font-size: .82rem;
+				line-height: 1.4;
+			}
+			.ikev2-disclosure-badges {
+				display: flex;
+				align-items: center;
+				justify-content: flex-end;
+				flex-wrap: wrap;
+				gap: .4rem;
+			}
+			.ikev2-disclosure-body {
+				padding: 1rem;
+				border-top: 1px solid var(--ikev2-border);
+				background: color-mix(in srgb, var(--ikev2-surface) 75%, transparent);
+			}
+			.ikev2-panel-note {
+				margin: 0 0 1rem;
+				color: var(--ikev2-muted);
+				line-height: 1.5;
+			}
 
 			/* ── Password row ───────────────────────────────────────── */
 			.ikev2-password {
@@ -1663,7 +1744,11 @@ function styles() {
 				.ikev2-header > *, .ikev2-section-head > * { margin-bottom: .8rem; }
 				.ikev2-card, .ikev2-card.wide { grid-column: 1 / -1; }
 				.ikev2-form-grid { grid-template-columns: 1fr; gap: .4rem; }
+				.ikev2-form-grid-compact { grid-template-columns: 1fr; }
+				.ikev2-form-grid-compact > .ikev2-field-label { padding-top: 0; }
 				.ikev2-form-grid > :nth-child(even) { margin-bottom: .8rem; }
+				.ikev2-disclosure > summary { align-items: flex-start; flex-wrap: wrap; }
+				.ikev2-disclosure-badges { justify-content: flex-start; }
 				.ikev2-two-col { grid-template-columns: 1fr; }
 				.ikev2-page .table { display: block; overflow-x: auto; }
 				.ikev2-user-card { grid-template-columns: 1fr; }

@@ -27,3 +27,7 @@ personally identifying domain names from all attachments.
 
 Router backups and `/etc/ikev2-manager/` contain reversible VPN credentials.
 `/etc/swanctl/private/` contains private keys. Treat both as secrets.
+
+The LuCI interface submits new VPN and ACME credentials through temporary
+files with mode `0600`; secrets are removed immediately after the backend reads
+them and are never passed as process command-line arguments.

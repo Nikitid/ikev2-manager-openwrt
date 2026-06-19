@@ -56,6 +56,17 @@ function runUserAction(button, args, success, opts) {
 	});
 }
 
+function runUserSecretAction(button, action, user, password, success) {
+	var payload = [ action, user, password ].join('\n') + '\n';
+	return fs.write('/var/run/ikev2-manager-user.in', payload, 384 /* 0600 */).then(function() {
+		return runUserAction(button, [ 'user-secret-set' ], success);
+	}, function(error) {
+		ui.addNotification(null, E('p', {}, [
+			_('Unable to save the VPN user: %s').format(error.message || error)
+		]), 'danger');
+	});
+}
+
 function passwordDialog(title, username, action, includeUsername) {
 	var name = E('input', {
 		'type': 'text',
@@ -99,7 +110,8 @@ function passwordDialog(title, username, action, includeUsername) {
 							ui.addNotification(null, E('p', {}, [ _('Password is required.') ]), 'warning');
 							return;
 						}
-						return runUserAction(button, [ action, user, password.value ],
+						return runUserSecretAction(button,
+							action === 'user-add' ? 'add' : 'password', user, password.value,
 							includeUsername ? _('VPN user added.') : _('Password changed.'));
 					}
 				}, [ _('Save') ])

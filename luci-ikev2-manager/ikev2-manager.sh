@@ -17,6 +17,8 @@ inbound_secrets="$root/etc/swanctl/conf.d/91-inbound-secrets.conf"
 outbound_conf="$root/etc/swanctl/conf.d/20-proxy-out.conf"
 outbound_secret="$root/etc/swanctl/conf.d/90-proxy-out-secret.conf"
 client_secret_db="$root/etc/ikev2-manager/client.secret"
+user_input_file="${IKEV2_USER_INPUT:-/var/run/ikev2-manager-user.in}"
+client_input_file="${IKEV2_CLIENT_INPUT:-/var/run/ikev2-manager-client.in}"
 inbound_custom="$root/etc/ikev2-manager/inbound.custom.conf"
 outbound_custom="$root/etc/ikev2-manager/outbound.custom.conf"
 system_helper="${IKEV2_SYSTEM_HELPER:-$root/usr/libexec/ikev2-manager-system}"
@@ -53,6 +55,79 @@ swanctl_quiet() {
 	rm -f "$err"
 	[ -n "$filtered" ] && printf '%s\n' "$filtered" >&2
 	return "$code"
+}
+
+consume_user_input() {
+	[ -f "$user_input_file" ] || die 'User input is missing'
+	[ ! -L "$user_input_file" ] || die 'User input must not be a symbolic link'
+	chmod 600 "$user_input_file"
+	action="$(sed -n '1p' "$user_input_file")"
+	user="$(sed -n '2p' "$user_input_file")"
+	password="$(sed -n '3p' "$user_input_file")"
+	rm -f "$user_input_file"
+	[ "$action" = add ] || [ "$action" = password ] || die 'Invalid user action'
+	valid_user "$user" || die 'Invalid username'
+	valid_password "$password" || die 'Password must be 1-256 characters without control characters'
+	encoded="$(printf '%s' "$password" | openssl base64 -A)"
+	update_user "$user" "0s$encoded"
+}
+
+consume_client_input() {
+	[ -f "$client_input_file" ] || die 'Client input is missing'
+	[ ! -L "$client_input_file" ] || die 'Client input must not be a symbolic link'
+	chmod 600 "$client_input_file"
+	mode="$(sed -n '1p' "$client_input_file")"
+	enabled="$(sed -n '2p' "$client_input_file")"
+	remote_address="$(sed -n '3p' "$client_input_file")"
+	remote_id="$(sed -n '4p' "$client_input_file")"
+	username="$(sed -n '5p' "$client_input_file")"
+	dpd="$(sed -n '6p' "$client_input_file")"
+	mtu="$(sed -n '7p' "$client_input_file")"
+	password="$(sed -n '8p' "$client_input_file")"
+	rm -f "$client_input_file"
+
+	[ "$mode" = set ] || [ "$mode" = save ] || die 'Invalid client action'
+	[ "$enabled" = 0 ] || [ "$enabled" = 1 ] || die 'Invalid enabled value'
+	if [ "$enabled" = 1 ]; then
+		if [ "$mode" = set ]; then
+			[ "$(getv globals configured)" = 1 ] ||
+				ip link show ipsec-out >/dev/null 2>&1 ||
+				die 'Complete and enable Overview first'
+		fi
+		valid_host_list "$remote_address" || die 'Invalid remote address list'
+		valid_host "$remote_id" || die 'Invalid remote identity'
+		valid_user "$username" || die 'Invalid username'
+		[ -s "$client_secret_db" ] || [ -n "$password" ] ||
+			die 'EAP password is required when enabling the client'
+	fi
+	in_range "$dpd" 10 300 || die 'DPD must be 10-300 seconds'
+	in_range "$mtu" 1280 1500 || die 'MTU must be 1280-1500'
+
+	uci set "$uci_config.client.enabled=$enabled"
+	uci set "$uci_config.client.remote_address=$(normalize_host_list "$remote_address")"
+	uci set "$uci_config.client.remote_id=$remote_id"
+	uci set "$uci_config.client.username=$username"
+	uci set "$uci_config.client.dpd=$dpd"
+	uci set "$uci_config.client.mtu=$mtu"
+	uci commit "$uci_config"
+	if [ -n "$password" ]; then
+		set_client_secret "$username" "$password"
+	else
+		sync_client_secret_identity "$username"
+	fi
+	render_client
+	render_client_secret
+
+	[ "$mode" = set ] || return 0
+	if [ "$(getv globals configured)" = 1 ]; then
+		if [ "$enabled" = 1 ]; then
+			start_action client-connect
+		else
+			start_action client-disable
+		fi
+	elif [ "$enabled" = 1 ]; then
+		start_action connect
+	fi
 }
 
 valid_user() {
@@ -1122,13 +1197,8 @@ case "${1:-}" in
 	users-show)
 		show_users
 		;;
-	user-add | user-password)
-		user="${2:-}"
-		password="${3:-}"
-		valid_user "$user" || die 'Invalid username'
-		valid_password "$password" || die 'Password must be 1-256 characters without control characters'
-		encoded="$(printf '%s' "$password" | openssl base64 -A)"
-		update_user "$user" "0s$encoded"
+	user-secret-set)
+		consume_user_input
 		;;
 	user-delete)
 		user="${2:-}"
@@ -1268,77 +1338,8 @@ case "${1:-}" in
 			printf '%s=%s\n' "$key" "$(getv client "$key")"
 		done
 		;;
-	client-set)
-		shift
-		[ "$#" -ge 6 ] || die 'Expected: enabled remote_address remote_id username dpd mtu [password]'
-		enabled="$1"; remote_address="$2"; remote_id="$3"; username="$4"; dpd="$5"; mtu="$6"; password="${7:-}"
-		[ "$enabled" = 0 ] || [ "$enabled" = 1 ] || die 'Invalid enabled value'
-		if [ "$enabled" = 1 ]; then
-			[ "$(getv globals configured)" = 1 ] ||
-				ip link show ipsec-out >/dev/null 2>&1 ||
-				die 'Complete and enable Overview first'
-			valid_host_list "$remote_address" || die 'Invalid remote address list'
-			valid_host "$remote_id" || die 'Invalid remote identity'
-			valid_user "$username" || die 'Invalid username'
-			[ -s "$client_secret_db" ] || [ -n "$password" ] ||
-				die 'EAP password is required when enabling the client'
-		fi
-		in_range "$dpd" 10 300 || die 'DPD must be 10-300 seconds'
-		in_range "$mtu" 1280 1500 || die 'MTU must be 1280-1500'
-		uci set "$uci_config.client.enabled=$enabled"
-		uci set "$uci_config.client.remote_address=$(normalize_host_list "$remote_address")"
-		uci set "$uci_config.client.remote_id=$remote_id"
-		uci set "$uci_config.client.username=$username"
-		uci set "$uci_config.client.dpd=$dpd"
-		uci set "$uci_config.client.mtu=$mtu"
-		uci commit "$uci_config"
-		if [ -n "$password" ]; then
-			set_client_secret "$username" "$password"
-		else
-			sync_client_secret_identity "$username"
-		fi
-		render_client
-		render_client_secret
-		if [ "$(getv globals configured)" = 1 ]; then
-			if [ "$enabled" = 1 ]; then
-				start_action client-connect
-			else
-				start_action client-disable
-			fi
-		elif [ "$enabled" = 1 ]; then
-			start_action connect
-		fi
-		;;
-	client-save)
-		shift
-		[ "$#" -ge 6 ] || die 'Expected: enabled remote_address remote_id username dpd mtu [password]'
-		enabled="$1"; remote_address="$2"; remote_id="$3"; username="$4"; dpd="$5"; mtu="$6"; password="${7:-}"
-		[ "$enabled" = 0 ] || [ "$enabled" = 1 ] || die 'Invalid enabled value'
-		if [ "$enabled" = 1 ]; then
-			valid_host_list "$remote_address" || die 'Invalid remote address list'
-			valid_host "$remote_id" || die 'Invalid remote identity'
-			valid_user "$username" || die 'Invalid username'
-			[ -s "$client_secret_db" ] || [ -n "$password" ] ||
-				die 'EAP password is required when enabling the client'
-		fi
-		in_range "$dpd" 10 300 || die 'DPD must be 10-300 seconds'
-		in_range "$mtu" 1280 1500 || die 'MTU must be 1280-1500'
-		uci set "$uci_config.client.enabled=$enabled"
-		uci set "$uci_config.client.remote_address=$(normalize_host_list "$remote_address")"
-		uci set "$uci_config.client.remote_id=$remote_id"
-		uci set "$uci_config.client.username=$username"
-		uci set "$uci_config.client.dpd=$dpd"
-		uci set "$uci_config.client.mtu=$mtu"
-		uci commit "$uci_config"
-		if [ -n "$password" ]; then
-			set_client_secret "$username" "$password"
-		else
-			sync_client_secret_identity "$username"
-		fi
-		render_client
-		render_client_secret
-		# "Save" is intentionally persistence-only. The active tunnel is left
-		# untouched until Save and connect or Reconnect is used.
+	client-input)
+		consume_client_input
 		;;
 	reconnect-client)
 		[ "$(getv globals configured)" = 1 ] || die 'Complete and enable Overview first'
@@ -1407,6 +1408,6 @@ case "${1:-}" in
 		advanced_reset "$2"
 		;;
 	*)
-		die 'Usage: ikev2-manager {overview|users|users-show|user-add|user-password|user-delete|disconnect|disconnect-all|server-get|server-set|server-access-get|server-access-set|server-ensure|client-get|client-set|client-save|reconnect-client|action-status|advanced-mode|advanced-read|advanced-start|advanced-reset-start|advanced-set|advanced-reset|reload}'
+		die 'Usage: ikev2-manager {overview|users|users-show|user-secret-set|user-delete|disconnect|disconnect-all|server-get|server-set|server-access-get|server-access-set|server-ensure|client-get|client-input|reconnect-client|action-status|advanced-mode|advanced-read|advanced-start|advanced-reset-start|advanced-set|advanced-reset|reload}'
 		;;
 esac

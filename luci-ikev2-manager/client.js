@@ -246,31 +246,39 @@ return view.extend({
 				});
 		});
 
-		function collectArgs(cmd) {
-			var args = [
-				cmd,
+		function writeClientInput(mode) {
+			var payload = [
+				mode,
 				enabled.checked ? '1' : '0',
 				address.value.trim(),
 				remoteId.value.trim(),
 				username.value.trim(),
 				dpd.value,
-				mtu.value
-			];
-			if (password.value)
-				args.push(password.value);
-			return args;
+				mtu.value,
+				password.value
+			].join('\n') + '\n';
+			return fs.write('/var/run/ikev2-manager-client.in', payload, 384 /* 0600 */);
+		}
+
+		function runClientInputJob(button, mode, busy, success, failure, timeout) {
+			return writeClientInput(mode).then(function() {
+				return runManagerJob(button, connectResult, [ 'client-input' ],
+					busy, success, failure, timeout, refreshClientState);
+			}).catch(function(error) {
+				connectResult.err(error.message || error);
+			});
 		}
 
 		saveOnly.addEventListener('click', function() {
-			return runManagerJob(saveOnly, connectResult, collectArgs('client-save'),
-				_('Saving...'), _('Saved'), _('Save failed'), 120000, refreshClientState);
+			return runClientInputJob(saveOnly, 'save',
+				_('Saving...'), _('Saved'), _('Save failed'), 120000);
 		});
 
 		save.addEventListener('click', function() {
-			return runManagerJob(save, connectResult, collectArgs('client-set'),
+			return runClientInputJob(save, 'set',
 				enabled.checked ? _('Saving and connecting...') : _('Saving and stopping...'),
 				enabled.checked ? _('Saved and connected') : _('Saved and disabled'),
-				_('Apply failed'), 150000, refreshClientState);
+				_('Apply failed'), 150000);
 		});
 
 		// Reconnect the existing tunnel without changing saved settings.

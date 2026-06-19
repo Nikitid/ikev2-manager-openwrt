@@ -5,6 +5,18 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+No changes yet.
+
+## 1.0.0-r3 - 2026-06-19
+
+First public release.
+
+- Consolidated inbound server settings into one compact card with expandable
+  access, ACME and advanced connection panels.
+- Moved VPN and ACME secret submission to permission-restricted temporary files
+  so credentials do not appear in process command lines.
+- Added ShellCheck, actionlint and Gitleaks CI checks and pinned every GitHub
+  Action to an immutable commit.
 - Simplified fail-closed routing to the native PBR unreachable default plus
   XFRM policy enforcement, removing the duplicate nftables drop layer and
   redundant PBR/firewall restarts.
@@ -33,18 +45,7 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 - Replaced the full dependency matrix with four priority checks and an
   expandable diagnostic report.
 - Reviewed Russian UI terminology and removed awkward literal translations.
-
-## 1.0.0-r1
-
-- Public-release compatibility gate and hardware capability report.
-- Safe dependency preflight before changing dnsmasq or installing kernel modules.
-- Public repository metadata, CI and sanitized validation documentation.
-- Unified public name and package identity: IKEv2 Manager for OpenWrt /
-  `luci-app-ikev2-manager`.
-
-## Pre-public development
-
-- Faster outbound and inbound actions without unnecessary full PBR rebuilds.
-- Live LuCI status refresh and in-place device exception updates.
-- Unified asynchronous LuCI action contract with serialized workers, polling,
-  timeout handling and guaranteed button recovery.
+- Added the public-release compatibility gate, hardware capability report,
+  safe dependency preflight, CI and sanitized support documentation.
+- Unified long-running LuCI operations around serialized background jobs,
+  status polling and reliable button recovery.
