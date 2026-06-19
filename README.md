@@ -39,7 +39,7 @@ See [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Installation
 
-Download `luci-app-ikev2-manager_1.0.0-r3_all.ipk` from the GitHub release and
+Download `luci-app-ikev2-manager_1.0.0-r4_all.ipk` from the GitHub release and
 install it through:
 
 ```text
@@ -140,7 +140,7 @@ runs ShellCheck, actionlint and Gitleaks.
 Artifacts are written to `dist/`:
 
 ```text
-luci-app-ikev2-manager_1.0.0-r3_all.ipk
+luci-app-ikev2-manager_1.0.0-r4_all.ipk
 SHA256SUMS
 ```
 
@@ -160,8 +160,9 @@ accepted by BusyBox `opkg` even when built on macOS.
 
 ## Release
 
-`1.0.0-r3` is the first public release. The application version follows
-semantic versioning; the `-rN` suffix is the OpenWrt package revision.
+`1.0.0-r3` was the first public release. `1.0.0-r4` is the current package
+revision. The application version follows semantic versioning; the `-rN`
+suffix is the OpenWrt package revision.
 
 ## License
 

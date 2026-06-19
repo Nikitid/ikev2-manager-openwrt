@@ -7,6 +7,14 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 No changes yet.
 
+## 1.0.0-r4 - 2026-06-19
+
+- Made `Installed-Size` independent of filesystem block allocation so canonical
+  builds on macOS and Linux produce the same IPK bytes.
+- Replaced the Gitleaks wrapper Action with a checksum-verified Gitleaks CLI
+  invocation that correctly scans a repository beginning at a root commit.
+- Updated pinned GitHub Actions to their Node.js 24 releases.
+
 ## 1.0.0-r3 - 2026-06-19
 
 First public release.

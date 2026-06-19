@@ -27,7 +27,7 @@ Validation on one target does not imply support for every router. New targets
 should be added only after the same release gate passes and the result is
 recorded without private router data.
 
-## 1.0.0-r3 evidence
+## 1.0.0-r4 evidence
 
 - public compatibility preflight: pass;
 - complete `opkg --noaction` dependency plan: pass;

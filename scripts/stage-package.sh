@@ -73,7 +73,21 @@ install -m 600 /dev/null "$stage/etc/pbr-ikev2-community-selected.txt"
 # field order is preserved so the artifact stays byte-stable across rebuilds.
 # scripts/check-version-sync.sh asserts the SDK Makefile literals still match
 # (including Architecture, kept literal below as it is invariant for this pkg).
-installed_size="$(du -sk "$stage" | awk '{ print $1 }')"
+# Filesystem block allocation differs between macOS and Linux, so `du -sk`
+# makes otherwise identical packages produce different control archives.
+# Installed-Size is the rounded sum of payload file bytes instead.
+installed_size="$(python3 - "$stage" <<'PY'
+import os
+import sys
+
+total = 0
+for directory, directories, files in os.walk(sys.argv[1]):
+    directories[:] = [name for name in directories if name != "CONTROL"]
+    for name in files:
+        total += os.lstat(os.path.join(directory, name)).st_size
+print((total + 1023) // 1024)
+PY
+)"
 {
 	printf 'Package: %s\n' "$PKG_NAME"
 	printf 'Version: %s-r%s\n' "$PKG_VERSION" "$PKG_RELEASE"
