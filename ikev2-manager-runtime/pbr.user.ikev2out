@@ -1,0 +1,71 @@
+#!/bin/sh
+
+table_id="$(awk '$2 == "pbr_ikev2out" { print $1; exit }' /etc/iproute2/rt_tables)"
+[ -n "$table_id" ] || return 1
+[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] ||
+[ "$(uci -q get ikev2-manager.client.enabled)" = 1 ] ||
+	return 0
+
+# Refill the domain set from the ikev2-health dump after a firewall/pbr
+# restart flushed it. Restore happens regardless of tunnel state: marked
+# traffic is held by the kill-switch instead of leaking unmarked to WAN.
+# IPv4 only — the outbound tunnel and client PBR are v4-only.
+# This file is sourced by PBR, so variables are prefixed to avoid clashes.
+# PBR overrides the `nft` command while sourcing includes (it appends every
+# `nft ...` call into its generated ruleset, which breaks `nft -f` and makes
+# PBR fail to start). Call the binary by full path to actually execute, the
+# same way PBR's own pbr.user.dnsprefetch example does.
+ikev2_nft='/usr/sbin/nft'
+ikev2_set="$(
+	"$ikev2_nft" list sets inet fw4 2>/dev/null |
+		sed -n 's/^[[:space:]]*set \(pbr_ikev2out_4_dst_ip_[^[:space:]]*\) {.*/\1/p' |
+		grep -v '_user$' | head -n1
+)"
+ikev2_dump="/var/run/pbr-ikev2-set4.dump"
+if [ -n "$ikev2_set" ] &&
+	[ -s "$ikev2_dump" ] &&
+	! "$ikev2_nft" list set inet fw4 "$ikev2_set" 2>/dev/null | grep -q 'elements'; then
+	ikev2_elements="$(tr '\n' ',' <"$ikev2_dump" | sed 's/,$//')"
+	[ -n "$ikev2_elements" ] &&
+		"$ikev2_nft" add element inet fw4 "$ikev2_set" "{ $ikev2_elements }" 2>/dev/null || :
+fi
+
+for ikev2_interface in $(uci -q get ikev2-manager.globals.source_interface); do
+	ikev2_device="$(ubus call "network.interface.$ikev2_interface" status 2>/dev/null |
+		jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+	[ -n "$ikev2_device" ] ||
+		ikev2_device="$(ubus call "network.interface.$ikev2_interface" status 2>/dev/null |
+			jsonfilter -e '@.device' 2>/dev/null || true)"
+	[ -n "$ikev2_device" ] ||
+		ikev2_device="$(uci -q get "network.$ikev2_interface.device" 2>/dev/null || true)"
+	[ -n "$ikev2_device" ] || continue
+	ikev2_subnet="$(
+		ip -4 route show dev "$ikev2_device" scope link 2>/dev/null |
+			awk '$1 ~ /^[0-9.]+\/[0-9]+$/ { print $1; exit }'
+	)"
+	[ -n "$ikev2_subnet" ] &&
+		ip -4 route replace "$ikev2_subnet" dev "$ikev2_device" table "$table_id"
+done
+
+if [ "$(uci -q get ikev2-manager.server.enabled)" = 1 ]; then
+	ikev2_inbound_subnet="$(/usr/libexec/ikev2-manager-system gateway-network 2>/dev/null || true)"
+	[ -n "$ikev2_inbound_subnet" ] &&
+		ip -4 route replace "$ikev2_inbound_subnet" dev ipsec-in table "$table_id"
+fi
+
+# Keep a terminal route in the PBR table at all times. If the CHILD_SA or VIP
+# disappears, selected traffic fails closed instead of falling through to WAN.
+# PBR strict enforcement may add an unreachable default without a metric before
+# this include runs; remove it so the live tunnel route can win.
+while ip -4 route del unreachable default table "$table_id" 2>/dev/null; do
+	:
+done
+ip -4 route replace unreachable default metric 32767 table "$table_id"
+if [ -s /var/run/ikev2-vip4 ] &&
+	ip link show ipsec-out 2>/dev/null | grep -q 'UP'; then
+	ip -4 route replace default dev ipsec-out metric 10 table "$table_id"
+else
+	ip -4 route del default dev ipsec-out table "$table_id" 2>/dev/null || true
+fi
+
+return 0

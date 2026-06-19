@@ -1,0 +1,30 @@
+Third-party domain-list integration
+===================================
+
+The optional community-list feature can download selected service lists at
+runtime from:
+
+    https://github.com/itdoginfo/allow-domains
+
+The domain-list contents from that repository are not included in this source
+tree or in the OpenWrt package. As of June 19, 2026, the upstream repository
+does not contain a license file. Public availability on GitHub does not by
+itself grant redistribution rights.
+
+Downloaded content is controlled by its upstream authors and is not covered by
+this project's MIT License. Users who enable the integration are responsible
+for determining whether their use of the external lists is permitted.
+
+The project-maintained lists under `luci-ikev2-domains/local-services/` are
+part of this repository and are covered by the MIT License.
+
+ISRG root certificates
+======================
+
+The package includes the public ISRG Root X1 and ISRG Root X2 trust anchors
+published by Let's Encrypt:
+
+    https://letsencrypt.org/certificates/
+
+They are included as certificate data used to verify ACME downloads and are
+not authored by this project.

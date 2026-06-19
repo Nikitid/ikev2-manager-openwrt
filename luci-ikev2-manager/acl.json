@@ -1,0 +1,61 @@
+{
+	"luci-app-ikev2-manager": {
+		"description": "Manage and monitor the router IKEv2 system",
+		"read": {
+			"file": {
+				"/etc/pbr-ikev2-domains.txt": [ "read" ],
+				"/etc/pbr-ikev2-domains.manual.txt": [ "read" ],
+				"/etc/pbr-ikev2-community-selected.txt": [ "read" ],
+				"/tmp/ikev2-domains-community.status": [ "read" ],
+				"/tmp/ikev2-manager-deps.status": [ "read" ],
+				"/usr/libexec/ikev2-devices networks": [ "exec" ],
+				"/usr/libexec/ikev2-devices dump": [ "exec" ],
+				"/usr/libexec/ikev2-domains-community catalog": [ "exec" ],
+				"/usr/libexec/ikev2-manager overview": [ "exec" ],
+				"/usr/libexec/ikev2-manager users": [ "exec" ],
+				"/usr/libexec/ikev2-manager users-show": [ "exec" ],
+				"/usr/libexec/ikev2-manager server-get": [ "exec" ],
+				"/usr/libexec/ikev2-manager server-access-get": [ "exec" ],
+				"/usr/libexec/ikev2-manager acme-get": [ "exec" ],
+				"/usr/libexec/ikev2-manager acme-status": [ "exec" ],
+				"/usr/libexec/ikev2-manager client-get": [ "exec" ],
+				"/usr/libexec/ikev2-manager connect-status": [ "exec" ],
+				"/usr/libexec/ikev2-manager apply-status": [ "exec" ],
+				"/usr/libexec/ikev2-manager action-status": [ "exec" ],
+				"/usr/libexec/ikev2-manager action-status *": [ "exec" ],
+				"/usr/libexec/ikev2-manager advanced-mode *": [ "exec" ],
+				"/usr/libexec/ikev2-manager advanced-read *": [ "exec" ],
+				"/usr/libexec/ikev2-manager-system get": [ "exec" ],
+				"/usr/libexec/ikev2-manager-system doctor": [ "exec" ],
+				"/usr/libexec/ikev2-manager-system action-status": [ "exec" ],
+				"/usr/libexec/ikev2-manager-system action-status *": [ "exec" ],
+				"/usr/sbin/swanmon list-sas": [ "exec" ],
+				"/usr/sbin/swanmon list-conns": [ "exec" ],
+				"/usr/sbin/swanmon stats": [ "exec" ]
+			}
+		},
+		"write": {
+			"file": {
+				"/etc/pbr-ikev2-domains.txt": [ "write" ],
+				"/etc/pbr-ikev2-domains.manual.txt": [ "write" ],
+				"/etc/pbr-ikev2-community-selected.txt": [ "write" ],
+				"/usr/libexec/ikev2-manager user-add * *": [ "exec" ],
+				"/usr/libexec/ikev2-manager user-password * *": [ "exec" ],
+				"/usr/libexec/ikev2-manager user-delete *": [ "exec" ],
+				"/usr/libexec/ikev2-manager disconnect *": [ "exec" ],
+				"/usr/libexec/ikev2-manager disconnect-all": [ "exec" ],
+				"/tmp/ikev2-acme.in": [ "write" ],
+				"/usr/libexec/ikev2-manager acme-set": [ "exec" ],
+				"/usr/libexec/ikev2-manager acme-issue": [ "exec" ],
+				"/usr/libexec/ikev2-manager *": [ "exec" ],
+				"/usr/libexec/ikev2-manager-system *": [ "exec" ],
+				"/usr/libexec/ikev2-domains-community *": [ "exec" ],
+				"/usr/libexec/ikev2-domains-restart": [ "exec" ],
+				"/usr/libexec/ikev2-devices *": [ "exec" ]
+			},
+			"ubus": {
+				"file": [ "exec", "write" ]
+			}
+		}
+	}
+}

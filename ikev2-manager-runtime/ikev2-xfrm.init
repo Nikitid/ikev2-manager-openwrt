@@ -1,0 +1,53 @@
+#!/bin/sh /etc/rc.common
+
+START=19
+STOP=89
+
+is_active() {
+	[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] ||
+	[ "$(uci -q get ikev2-manager.client.enabled)" = 1 ] ||
+	[ "$(uci -q get ikev2-manager.server.enabled)" = 1 ]
+}
+
+start() {
+	is_active || return 0
+	out_mtu="$(uci -q get ikev2-manager.client.mtu || echo 1400)"
+	in_mtu="$(uci -q get ikev2-manager.server.mtu || echo 1400)"
+	server_enabled="$(uci -q get ikev2-manager.server.enabled || echo 0)"
+	gateway4="$(uci -q get ikev2-manager.server.gateway4 || true)"
+
+	modprobe xfrm_interface
+	ip link show ipsec-out >/dev/null 2>&1 ||
+		ip link add ipsec-out type xfrm if_id 42
+	ip link set ipsec-out mtu "$out_mtu" up
+
+	if [ "$server_enabled" = 1 ]; then
+		ip link show ipsec-in >/dev/null 2>&1 ||
+			ip link add ipsec-in type xfrm if_id 43
+		ip link set ipsec-in mtu "$in_mtu" up
+
+		if [ -n "$gateway4" ] &&
+			! ip -4 -o addr show dev ipsec-in | awk '{print $4}' |
+				grep -Fxq "$gateway4"; then
+			ip -4 addr flush dev ipsec-in scope global
+			ip -4 addr add "$gateway4" dev ipsec-in
+			/etc/init.d/dnsmasq running 2>/dev/null &&
+				/etc/init.d/dnsmasq reload >/dev/null 2>&1
+		fi
+	else
+		ip link del ipsec-in 2>/dev/null || true
+	fi
+
+	# IPv4-only tunnel: when the router has no IPv6 uplink, make global IPv6 fail
+	# fast at boot so dual-stack clients drop to IPv4 instead of hanging on a v6
+	# attempt that can't be routed (and would bypass the v4 kill-switch). Local
+	# IPv6 (link-local/ULA) keeps working via more-specific on-link routes.
+	if ! ip -6 route show default 2>/dev/null | grep -q .; then
+		ip -6 route replace unreachable default metric 2147483647 2>/dev/null || true
+	fi
+}
+
+stop() {
+	ip link del ipsec-in 2>/dev/null || true
+	ip link del ipsec-out 2>/dev/null || true
+}

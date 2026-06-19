@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible router, LuCI or data-plane problem
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Safety
+      options:
+        - label: I removed credentials, private keys, public IPs and private domains.
+          required: true
+        - label: I did not attach a router backup.
+          required: true
+  - type: input
+    attributes:
+      label: Package version
+      placeholder: 1.0.0-r1
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: OpenWrt release and target
+      placeholder: OpenWrt 24.10.x, mediatek/filogic
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Router model
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Doctor output
+      description: Paste sanitized output from /usr/libexec/ikev2-manager-system doctor
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true

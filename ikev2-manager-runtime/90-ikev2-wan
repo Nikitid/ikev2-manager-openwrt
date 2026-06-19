@@ -1,0 +1,13 @@
+#!/bin/sh
+
+[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || exit 0
+wan_interface="$(uci -q get ikev2-manager.globals.wan_interface || echo wan)"
+[ "$INTERFACE" = "$wan_interface" ] || exit 0
+
+case "$ACTION" in
+	ifup | ifupdate)
+		/etc/init.d/ikev2-xfrm start
+		/usr/libexec/ikev2-sync-vips || true
+		/usr/share/pbr/pbr.user.ikev2out || true
+		;;
+esac

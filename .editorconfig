@@ -1,0 +1,17 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = tab
+
+# pack-ipk.py is PEP8 (4-space) — keep it that way.
+[*.py]
+indent_style = space
+indent_size = 4
+
+# Markdown may use trailing spaces for hard line breaks.
+[*.md]
+trim_trailing_whitespace = false

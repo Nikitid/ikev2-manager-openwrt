@@ -1,0 +1,2 @@
+Runtime secrets and the VPN user database are stored in this directory.
+Do not publish it or include it in bug reports.
