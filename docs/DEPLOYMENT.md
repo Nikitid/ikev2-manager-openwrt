@@ -19,7 +19,7 @@ Install the release IPK from LuCI:
 
 ```text
 System -> Software -> Upload Package
-luci-app-ikev2-manager_1.0.0-r1_all.ipk
+luci-app-ikev2-manager_1.0.0-r2_all.ipk
 ```
 
 For CLI installation with dependency preparation:
@@ -142,7 +142,7 @@ installs `luci-app-ikev2-manager` and then runs the compatibility/dependency
 checks:
 
 ```sh
-/tmp/install.sh /tmp/luci-app-ikev2-manager_1.0.0-r1_all.ipk
+/tmp/install.sh /tmp/luci-app-ikev2-manager_1.0.0-r2_all.ipk
 ```
 
 Take an additional backup first when migrating manually:

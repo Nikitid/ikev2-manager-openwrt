@@ -14,7 +14,7 @@ package feeds and firewall stack must agree.
 | PBR | 1.2.x |
 | strongSwan | 5.9.x packages from the matching OpenWrt feed |
 | Kernel | Matching `kmod-xfrm-interface` available for the running kernel ABI |
-| DNS | `dnsmasq-full` with nftset support |
+| DNS | `dnsmasq-full` with nftset support; `dnsproxy` for managed upstreams |
 | Routing | IPv4 WAN and protected networks |
 | Storage | At least 12 MiB free persistent storage; 24 MiB recommended |
 | Temporary space | At least 16 MiB free in `/tmp` |

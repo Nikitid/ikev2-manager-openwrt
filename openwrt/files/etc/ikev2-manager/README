@@ -1,2 +1,4 @@
 Runtime secrets and the VPN user database are stored in this directory.
 Do not publish it or include it in bug reports.
+When managed DNS is enabled, the original dnsproxy and dnsmasq UCI exports are
+stored under dns-original/ so the previous resolver can be restored safely.

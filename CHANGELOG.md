@@ -5,6 +5,8 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Added opt-in DNS upstream management with provider presets for plain DNS,
+  DoT, DoH, HTTP/3, DoQ and DNSCrypt, including live validation and rollback.
 - Corrected VPN-user traffic directions so download and upload are shown from
   the remote user's perspective.
 - Switched the project license to the MIT License and added complete

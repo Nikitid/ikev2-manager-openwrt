@@ -317,6 +317,7 @@ doctor() {
 	check_command openssl openssl
 	check_command jsonfilter jsonfilter
 	check_command swanmon swanmon
+	check_command dnsproxy dnsproxy
 	if command -v curl >/dev/null 2>&1 && curl --version >/dev/null 2>&1; then
 		printf 'curl=ok\n'
 	else
@@ -411,6 +412,7 @@ doctor() {
 runtime_packages() {
 	cat <<'EOF'
 pbr
+dnsproxy
 strongswan
 strongswan-charon
 strongswan-swanctl
@@ -868,6 +870,296 @@ sync_pbr() {
 	uci commit pbr
 }
 
+dns_original_dir='/etc/ikev2-manager/dns-original'
+dns_input_file='/tmp/ikev2-manager-dns.in'
+
+ensure_dns_section() {
+	uci -q get "$config.dns" >/dev/null 2>&1 && return 0
+	uci set "$config.dns=dns"
+	uci set "$config.dns.managed=0"
+	uci set "$config.dns.protocol=doh"
+	uci set "$config.dns.provider=cloudflare"
+	uci set "$config.dns.upstream=https://dns.cloudflare.com/dns-query"
+	uci set "$config.dns.bootstrap=1.1.1.1:53 1.0.0.1:53"
+	uci set "$config.dns.fallback="
+	uci commit "$config"
+}
+
+dns_protocol_for_upstream() {
+	case "$1" in
+		udp://*) printf 'udp\n' ;;
+		tcp://*) printf 'tcp\n' ;;
+		tls://*) printf 'dot\n' ;;
+		https://*) printf 'doh\n' ;;
+		h3://*) printf 'h3\n' ;;
+		quic://*) printf 'doq\n' ;;
+		sdns://*) printf 'dnscrypt\n' ;;
+		*) printf 'unknown\n' ;;
+	esac
+}
+
+valid_dns_endpoint() {
+	protocol="$1"
+	endpoint="$2"
+	printf '%s' "$endpoint" |
+		grep -Eq '^[A-Za-z0-9._~:/?@%+=,&;-]+$' || return 1
+	case "$protocol:$endpoint" in
+		udp:udp://*) ;;
+		tcp:tcp://*) ;;
+		dot:tls://*) ;;
+		doh:https://*) ;;
+		doh3:https://*) ;;
+		h3:h3://*) ;;
+		doq:quic://*) ;;
+		dnscrypt:sdns://*) ;;
+		*) return 1 ;;
+	esac
+}
+
+valid_dns_endpoint_list() {
+	protocol="$1"
+	value="$(normalize_list "$2")"
+	[ -n "$value" ] || return 1
+	for endpoint in $value; do
+		valid_dns_endpoint "$protocol" "$endpoint" || return 1
+	done
+}
+
+valid_dns_bootstrap_list() {
+	value="$(normalize_list "$1")"
+	[ -n "$value" ] || return 1
+	for endpoint in $value; do
+		printf '%s\n' "$endpoint" | awk -F: '
+			NF != 2 || $2 !~ /^[0-9]+$/ || $2 < 1 || $2 > 65535 { exit 1 }
+			{
+				split($1, octet, ".")
+				if (length(octet) != 4) exit 1
+				for (i = 1; i <= 4; i++)
+					if (octet[i] !~ /^[0-9]+$/ || octet[i] < 0 || octet[i] > 255)
+						exit 1
+			}
+		' || return 1
+	done
+}
+
+set_uci_list() {
+	package="$1"
+	section="$2"
+	option="$3"
+	value="$(normalize_list "$4")"
+	uci -q delete "$package.$section.$option" || true
+	for item in $value; do
+		uci add_list "$package.$section.$option=$item"
+	done
+}
+
+dns_service_state() {
+	{
+		if /etc/init.d/dnsproxy enabled 2>/dev/null; then
+			printf 'enabled=1\n'
+		else
+			printf 'enabled=0\n'
+		fi
+		if /etc/init.d/dnsproxy running 2>/dev/null; then
+			printf 'running=1\n'
+		else
+			printf 'running=0\n'
+		fi
+	}
+}
+
+save_dns_state() {
+	dir="$1"
+	mkdir -p "$dir"
+	uci export dnsproxy >"$dir/dnsproxy.uci" 2>/dev/null || :
+	uci export dhcp >"$dir/dhcp.uci" 2>/dev/null || :
+	dns_service_state >"$dir/service.state"
+}
+
+restore_dns_state() {
+	dir="$1"
+	[ -d "$dir" ] || return 0
+	for package in dnsproxy dhcp; do
+		[ -s "$dir/$package.uci" ] || continue
+		uci import "$package" <"$dir/$package.uci"
+		uci commit "$package"
+	done
+	enabled="$(sed -n 's/^enabled=//p' "$dir/service.state" 2>/dev/null | tail -1)"
+	running="$(sed -n 's/^running=//p' "$dir/service.state" 2>/dev/null | tail -1)"
+	if [ "$enabled" = 1 ]; then
+		/etc/init.d/dnsproxy enable >/dev/null 2>&1 || true
+	else
+		/etc/init.d/dnsproxy disable >/dev/null 2>&1 || true
+	fi
+	if [ "$running" = 1 ]; then
+		/etc/init.d/dnsproxy restart >/dev/null 2>&1 || true
+	else
+		/etc/init.d/dnsproxy stop >/dev/null 2>&1 || true
+	fi
+	/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+}
+
+ensure_dns_original() {
+	[ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ] && return 0
+	rm -rf "$dns_original_dir"
+	save_dns_state "$dns_original_dir"
+	uci set "$config.dns.saved=1"
+	uci commit "$config"
+}
+
+dns_query_ok() {
+	tries=0
+	while [ "$tries" -lt 8 ]; do
+		if nslookup openwrt.org 127.0.0.1 >/tmp/ikev2-manager-dns-test 2>&1 &&
+			awk '
+				/^Name:/ { answer = 1; next }
+				answer && /^Address:/ { found = 1 }
+				END { exit found ? 0 : 1 }
+			' /tmp/ikev2-manager-dns-test; then
+			rm -f /tmp/ikev2-manager-dns-test
+			return 0
+		fi
+		tries=$((tries + 1))
+		sleep 1
+	done
+	cat /tmp/ikev2-manager-dns-test >&2 2>/dev/null || true
+	rm -f /tmp/ikev2-manager-dns-test
+	return 1
+}
+
+dns_show() {
+	ensure_dns_section
+	managed="$(defaultv dns managed 0)"
+	protocol="$(defaultv dns protocol doh)"
+	provider="$(defaultv dns provider cloudflare)"
+	upstream="$(getv dns upstream)"
+	bootstrap="$(getv dns bootstrap)"
+	fallback="$(getv dns fallback)"
+	current_upstream="$(uci -q get dnsproxy.servers.upstream 2>/dev/null || true)"
+	current_bootstrap="$(uci -q get dnsproxy.servers.bootstrap 2>/dev/null || true)"
+	current_fallback="$(uci -q get dnsproxy.servers.fallback 2>/dev/null || true)"
+	current_protocol='unknown'
+	for endpoint in $current_upstream; do
+		current_protocol="$(dns_protocol_for_upstream "$endpoint")"
+		break
+	done
+	printf 'managed=%s\n' "$managed"
+	printf 'protocol=%s\n' "$protocol"
+	printf 'provider=%s\n' "$provider"
+	printf 'upstream=%s\n' "$upstream"
+	printf 'bootstrap=%s\n' "$bootstrap"
+	printf 'fallback=%s\n' "$fallback"
+	printf 'current_protocol=%s\n' "$current_protocol"
+	printf 'current_upstream=%s\n' "$current_upstream"
+	printf 'current_bootstrap=%s\n' "$current_bootstrap"
+	printf 'current_fallback=%s\n' "$current_fallback"
+	if /etc/init.d/dnsproxy running 2>/dev/null; then
+		printf 'running=1\n'
+	else
+		printf 'running=0\n'
+	fi
+}
+
+dns_apply() {
+	ensure_dns_section
+	managed="$1"
+	protocol="$2"
+	provider="$3"
+	upstream="$(normalize_list "$4")"
+	bootstrap="$(normalize_list "$5")"
+	fallback="$(normalize_list "$6")"
+	[ "$managed" = 0 ] || [ "$managed" = 1 ] || die 'Invalid DNS management mode'
+	valid_name "$provider" || die 'Invalid DNS provider'
+
+	if [ "$managed" = 0 ]; then
+		if [ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ]; then
+			restore_dns_state "$dns_original_dir"
+		fi
+		uci set "$config.dns.managed=0"
+		uci commit "$config"
+		dns_query_ok || die 'Restored DNS configuration is not resolving'
+		return 0
+	fi
+
+	case "$protocol" in
+		udp | tcp | dot | doh | doh3 | h3 | doq | dnscrypt) ;;
+		*) die 'Unsupported DNS protocol' ;;
+	esac
+	valid_dns_endpoint_list "$protocol" "$upstream" ||
+		die 'Invalid DNS upstream for the selected protocol'
+	valid_dns_bootstrap_list "$bootstrap" ||
+		die 'Bootstrap DNS must contain IPv4:port entries'
+	if [ -n "$fallback" ]; then
+		valid_dns_endpoint_list "$protocol" "$fallback" ||
+			die 'Fallback DNS must use the selected protocol'
+	fi
+	command -v dnsproxy >/dev/null 2>&1 || die 'dnsproxy is not installed'
+
+	ensure_dns_original
+	rollback="/tmp/ikev2-manager-dns-rollback-$$"
+	rm -rf "$rollback"
+	save_dns_state "$rollback"
+	uci export "$config" >"$rollback/$config.uci"
+
+	uci -q get dnsproxy.global >/dev/null 2>&1 ||
+		uci set dnsproxy.global=dnsproxy
+	uci -q get dnsproxy.servers >/dev/null 2>&1 ||
+		uci set dnsproxy.servers=dnsproxy
+	uci -q get dnsproxy.cache >/dev/null 2>&1 ||
+		uci set dnsproxy.cache=cache
+	uci set dnsproxy.global.enabled='1'
+	uci set dnsproxy.global.http3="$([ "$protocol" = doh3 ] && echo 1 || echo 0)"
+	uci set dnsproxy.global.insecure='0'
+	set_uci_list dnsproxy global listen_addr '127.0.0.1'
+	set_uci_list dnsproxy global listen_port '5453'
+	set_uci_list dnsproxy servers upstream "$upstream"
+	set_uci_list dnsproxy servers bootstrap "$bootstrap"
+	set_uci_list dnsproxy servers fallback "$fallback"
+	uci set dnsproxy.cache.enabled='1'
+	uci set dnsproxy.cache.cache_optimistic='1'
+	uci set dnsproxy.cache.size='65535'
+	uci commit dnsproxy
+
+	uci set dhcp.@dnsmasq[0].noresolv='1'
+	set_uci_list dhcp '@dnsmasq[0]' server '127.0.0.1#5453'
+	uci commit dhcp
+
+	uci set "$config.dns.managed=1"
+	uci set "$config.dns.protocol=$protocol"
+	uci set "$config.dns.provider=$provider"
+	uci set "$config.dns.upstream=$upstream"
+	uci set "$config.dns.bootstrap=$bootstrap"
+	uci set "$config.dns.fallback=$fallback"
+	uci commit "$config"
+
+	/etc/init.d/dnsproxy enable >/dev/null 2>&1 || true
+	if ! /etc/init.d/dnsproxy restart >/dev/null 2>&1 ||
+		! /etc/init.d/dnsmasq restart >/dev/null 2>&1 ||
+		! dns_query_ok; then
+		restore_dns_state "$rollback"
+		uci import "$config" <"$rollback/$config.uci"
+		uci commit "$config"
+		rm -rf "$rollback"
+		die 'DNS validation failed; previous resolver configuration was restored'
+	fi
+	rm -rf "$rollback"
+}
+
+dns_set_async() {
+	[ -s "$dns_input_file" ] || die 'DNS settings input is missing'
+	{
+		IFS= read -r managed
+		IFS= read -r protocol
+		IFS= read -r provider
+		IFS= read -r upstream
+		IFS= read -r bootstrap
+		IFS= read -r fallback || true
+	} <"$dns_input_file"
+	rm -f "$dns_input_file"
+	start_action dns-set "$managed" "$protocol" "$provider" \
+		"$upstream" "$bootstrap" "$fallback"
+}
+
 backup_uci_state() {
 	label="$1"
 	stamp="$(date +%Y%m%d-%H%M%S)"
@@ -1260,6 +1552,14 @@ run_action() {
 				action_status "$id" error 'Unable to remove the network; see /tmp/ikev2-system-action.log.'
 			fi
 			;;
+		dns-set)
+			action_status "$id" running 'Applying and testing DNS settings...'
+			if ( dns_apply "$@" ); then
+				action_status "$id" ok 'DNS settings applied.'
+			else
+				action_status "$id" error 'DNS apply failed; previous resolver configuration was restored.'
+			fi
+			;;
 		*)
 			action_status "$id" error 'Unknown router action.'
 			;;
@@ -1311,6 +1611,12 @@ case "${1:-}" in
 		;;
 	get)
 		show_config
+		;;
+	dns-get)
+		dns_show
+		;;
+	dns-set-async)
+		dns_set_async
 		;;
 	set)
 		shift
@@ -1371,6 +1677,6 @@ case "${1:-}" in
 		fi
 		;;
 	*)
-		die 'Usage: ikev2-manager-system {preflight|deps-plan|doctor|install-deps|remove-deps|deps-status|get|set|set-async|apply|server-apply|adopt-legacy|access-apply|disable|gateway-network|coverage-add|coverage-remove|coverage-async|action-status}'
+		die 'Usage: ikev2-manager-system {preflight|deps-plan|doctor|install-deps|remove-deps|deps-status|get|dns-get|dns-set-async|set|set-async|apply|server-apply|adopt-legacy|access-apply|disable|gateway-network|coverage-add|coverage-remove|coverage-async|action-status}'
 		;;
 esac

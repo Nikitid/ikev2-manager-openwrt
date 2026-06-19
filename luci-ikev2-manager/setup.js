@@ -128,6 +128,7 @@ function checkRows(doctor) {
 		resource_conflict: _('Reserved resource conflicts'),
 		firewall4: _('firewall4'),
 		dnsmasq_nftset: _('dnsmasq nftset support'),
+		dnsproxy: _('Encrypted DNS proxy'),
 		pbr_service: _('PBR service'),
 		pbr_version: _('PBR version'),
 		xfrm_module: _('XFRM interface module'),
@@ -432,7 +433,7 @@ return view.extend({
 					])
 				]),
 				common.section(_('Runtime dependencies'),
-					_('This installs PBR, strongSwan, dnsmasq-full and XFRM packages. VPN and routing stay disabled until managed mode is enabled.'),
+					_('This installs PBR, strongSwan, dnsmasq-full, dnsproxy and XFRM packages. VPN and routing stay disabled until managed mode is enabled.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-deps-summary' }, [
 							E('h4', {}, [ _('Key checks') ]),

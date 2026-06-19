@@ -122,11 +122,18 @@ form-generated profile.
 ```sh
 dnsmasq -v | grep nftset
 nft list set inet fw4 pbr_ikev2out_4_dst_ip_ikev2pbr_domains
+/usr/libexec/ikev2-manager-system dns-get
+nslookup openwrt.org 127.0.0.1
 ```
 
 Clients should receive the router as DNS. Plain port 53 can be redirected and
 DoT port 853 blocked by Overview. DoH and OS private relay features must be
 disabled separately when deterministic policy is required.
+
+Managed upstream changes are tested before they are accepted. If the lookup
+fails, the previous `dnsproxy` and `dhcp` configuration is restored. Selecting
+**Keep existing router DNS** restores the snapshot saved when managed DNS was
+first enabled.
 
 ## Certificate verification
 

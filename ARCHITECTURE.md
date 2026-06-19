@@ -8,6 +8,9 @@ LAN / IoT / inbound IKEv2 client
               v
        dnsmasq-full nftset
               |
+       dnsproxy upstream
+   UDP/TCP/DoT/DoH/H3/DoQ/DNSCrypt
+              |
        selected destination?
           /             \
         no               yes
@@ -59,6 +62,12 @@ creates or updates only:
 - `pbr.ikev2pbr_domains` and `pbr.ikev2pbr_include`;
 - generated strongSwan snippets under `/etc/swanctl/conf.d`;
 - runtime domain files and secrets listed in the package keep file.
+
+Managed DNS is opt-in. When enabled, the application also owns the
+`dnsproxy.global`, `dnsproxy.servers`, `dnsproxy.cache` settings and the
+upstream `server`/`noresolv` options of the primary dnsmasq instance. The
+pre-existing `dnsproxy` and `dhcp` UCI exports are retained under
+`/etc/ikev2-manager/dns-original/` and restored when managed DNS is disabled.
 
 Disabling Base Setup removes the managed network, firewall and PBR sections
 but preserves tunnel settings, domain selections, users and certificates.

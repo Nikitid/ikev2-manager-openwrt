@@ -32,7 +32,8 @@ Installing the package does **not** create firewall or PBR policies and does
 not connect either tunnel. The release IPK is a LuCI/bootstrap package: it
 installs the UI, helper scripts and an inactive UCI configuration with
 `configured=0`. Runtime dependencies such as PBR, strongSwan and
-`dnsmasq-full` are checked and installed from the setup flow before activation.
+`dnsmasq-full` and `dnsproxy` are checked and installed from the setup flow
+before activation.
 
 After installation open:
 
@@ -51,7 +52,7 @@ Download the release `.ipk`, then install it in LuCI:
 System -> Software -> Upload Package
 ```
 
-Upload `luci-app-ikev2-manager_1.0.0-r1_all.ipk` and install it. The package is
+Upload `luci-app-ikev2-manager_1.0.0-r2_all.ipk` and install it. The package is
 safe to install from the web UI on a fresh supported system: it does not replace
 `dnsmasq`, start strongSwan, enable PBR or change firewall rules. Its package
 pre-install script rejects unsupported OpenWrt releases and vendor firmware.
@@ -101,8 +102,24 @@ Replacing dnsmasq briefly restarts DNS and DHCP. Existing
 4. Use **Install runtime dependencies** if the readiness check reports missing packages.
 5. Save and enable the managed configuration.
 6. Configure **Outbound Tunnel** and connect it.
-7. Select services or domains in **Policy Routing**.
-8. Optionally configure ACME in LuCI, then enable **Inbound Server**.
+7. Optionally choose the router DNS transport and provider under
+   **Outbound Tunnel -> DNS upstream**.
+8. Select services or domains in **Policy Routing**.
+9. Optionally configure ACME in LuCI, then enable **Inbound Server**.
+
+## DNS upstream
+
+`dnsmasq-full` remains the LAN and VPN-client resolver because PBR uses its
+DNS answers to populate nftsets. It can forward public queries to a local
+`dnsproxy` instance, which supports UDP, TCP, DNS-over-TLS, DNS-over-HTTPS,
+DoH over HTTP/3, DNS-over-QUIC and DNSCrypt upstreams.
+
+The DNS block on the Outbound Tunnel page offers provider presets and a custom
+endpoint mode. Enabling managed DNS first saves the existing `dnsproxy` and
+`dhcp` UCI configuration. Every change is applied with a live lookup test; a
+failed test restores the previous resolver automatically. Selecting
+**Keep existing router DNS** restores the configuration captured before the
+application took ownership.
 9. Choose the inbound routes and access permissions under **Inbound Server**.
 10. Add credentials under **VPN Users**.
 
@@ -188,6 +205,7 @@ downloaded before replacement so the original resolver can be restored locally.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md),
 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md),
+[docs/DNS.md](docs/DNS.md),
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md),
 [docs/VALIDATION.md](docs/VALIDATION.md) and
 [docs/OPERATIONS.md](docs/OPERATIONS.md).

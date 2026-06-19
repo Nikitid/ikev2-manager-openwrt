@@ -242,6 +242,16 @@ init_uci() {
 		uci set "$uci_config.client.custom_config=0"
 	}
 
+	uci -q get "$uci_config.dns" >/dev/null 2>&1 || {
+		uci set "$uci_config.dns=dns"
+		uci set "$uci_config.dns.managed=0"
+		uci set "$uci_config.dns.protocol=doh"
+		uci set "$uci_config.dns.provider=cloudflare"
+		uci set "$uci_config.dns.upstream=https://dns.cloudflare.com/dns-query"
+		uci set "$uci_config.dns.bootstrap=1.1.1.1:53 1.0.0.1:53"
+		uci set "$uci_config.dns.fallback="
+	}
+
 	for assignment in \
 		'server.gateway4=10.20.30.1/24' \
 		'server.cert_source=/etc/ssl/acme' \
