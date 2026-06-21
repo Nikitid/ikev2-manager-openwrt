@@ -11,6 +11,7 @@ var statusFile    = '/tmp/ikev2-domains-community.status';
 var communityHelper = '/usr/libexec/ikev2-domains-community';
 var devicesHelper   = '/usr/libexec/ikev2-devices';
 var systemHelper    = '/usr/libexec/ikev2-manager-system';
+var domainRouterHelper = '/usr/libexec/ikev2-domain-router';
 
 function normalizeDomains(value) {
 	var lines = (value || '').replace(/\r/g, '').split('\n');
@@ -161,6 +162,24 @@ function pollStatus(actionId, deadline) {
 	});
 }
 
+function pollDomainRouter(actionId, deadline) {
+	return L.resolveDefault(fs.exec(domainRouterHelper, [ 'status' ]), {
+		code: 1, stdout: ''
+	}).then(function(response) {
+		var st = parseStatus((response || {}).stdout || '');
+		if (st.action_id === actionId &&
+		    (st.state === 'active' || st.state === 'disabled' || st.state === 'error'))
+			return st;
+		if (Date.now() >= deadline)
+			return null;
+		return new Promise(function(resolve) {
+			window.setTimeout(resolve, 1000);
+		}).then(function() {
+			return pollDomainRouter(actionId, deadline);
+		});
+	});
+}
+
 // Refresh the on-page status block without a full reload.
 function updateStatusLine(st) {
 	var pre = document.querySelector('#ikev2-status-line');
@@ -225,6 +244,9 @@ return view.extend({
 				code: 0, stdout: ''
 			}),
 			L.resolveDefault(fs.exec(devicesHelper, [ 'networks' ]), {
+				code: 0, stdout: ''
+			}),
+			L.resolveDefault(fs.exec(domainRouterHelper, [ 'status' ]), {
 				code: 0, stdout: ''
 			})
 		]);
@@ -532,6 +554,11 @@ return view.extend({
 		var selectedLines = (data[1] || '').trim().split(/\s+/);
 		var status = (data[2] || '').trim();
 		var statusData = parseStatus(status);
+		var routerStatus = parseStatus(((data[9] || {}).stdout || ''));
+		var fakeipActive = routerStatus.engine === 'fakeip' &&
+			routerStatus.service === 'running' &&
+			routerStatus.nft === 'active' &&
+			routerStatus.rule === 'active';
 		var activeDomains = (data[5] || '').split('\n').filter(function(line) {
 			return line.trim() && line.trim().charAt(0) !== '#';
 		}).length;
@@ -552,7 +579,56 @@ return view.extend({
 			]));
 		}
 
+		var engineResult = common.inlineResult();
+		var engineButton = E('button', {
+			'class': 'cbi-button ' + (fakeipActive ? 'cbi-button-reset' : 'cbi-button-apply')
+		}, [ fakeipActive ? _('Use legacy mode') : _('Enable reliable mode') ]);
+		engineButton.addEventListener('click', function() {
+			var command = fakeipActive ? 'deactivate-async' : 'activate-async';
+			return common.runAction({
+				button: engineButton,
+				result: engineResult,
+				busy: fakeipActive ? _('Disabling...') : _('Enabling...'),
+				run: function() {
+					return common.execChecked(domainRouterHelper, [ command ],
+						_('Unable to start routing-engine change')).then(function(response) {
+						var actionId = parseStatus(response.stdout || '').action_id;
+						if (!actionId)
+							throw new Error(_('Action did not start'));
+						return pollDomainRouter(actionId, Date.now() + 60000);
+					}).then(function(st) {
+						if (!st)
+							throw new Error(_('The operation continues in the background.'));
+						if (st.state === 'error')
+							throw new Error(st.message || _('Operation failed'));
+						engineResult.ok(st.message || _('Saved.'));
+						window.setTimeout(function() { window.location.reload(); }, 700);
+					});
+				}
+			});
+		});
+
 		var domainsContent = E('div', {}, [
+			common.section(_('Domain routing engine'),
+				_('Reliable mode gives selected domains stable virtual addresses and sends only those connections through IKEv2. Legacy nftset remains active as a migration fallback for already-open connections.'),
+				E('div', {}, [
+					E('div', { 'class': 'ikev2-section-head' }, [
+						E('div', {}, [
+							common.pill(fakeipActive ? _('Reliable mode active') : _('Legacy mode active'),
+								fakeipActive ? 'good' : 'warn'),
+							E('p', {
+								'class': 'cbi-section-descr',
+								'style': 'margin:.7rem 0 0'
+							}, [ fakeipActive ?
+								_('Router DNS cache is disabled; the persistent FakeIP mapping survives service restarts and router reboots.') :
+								_('Domains are currently classified from resolved public IP addresses and may leak through an existing WAN connection after an address change.') ])
+						]),
+						E('div', { 'class': 'ikev2-actions end' }, [
+							engineResult.node,
+							engineButton
+						])
+					])
+				])),
 			common.section(_('Community services'),
 				_('Curated domain groups are cached locally and merged atomically. Broad infrastructure groups may also route unrelated sites.'),
 				E('div', {}, [

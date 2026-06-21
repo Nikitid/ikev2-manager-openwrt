@@ -51,3 +51,8 @@ config dns 'dns'
 	option bootstrap '1.1.1.1:53 1.0.0.1:53'
 	option fallback ''
 	option timeout '10s'
+
+config domains 'domains'
+	option engine 'nftset'
+	option fakeip_ttl '60'
+	option cache_path '/etc/ikev2-manager/domain-router-cache.db'

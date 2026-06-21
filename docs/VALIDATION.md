@@ -22,10 +22,24 @@ Every release must pass:
 - PBR 1.2.2-r14;
 - strongSwan 5.9.14;
 - `kmod-xfrm-interface` matching the running kernel.
+- sing-box 1.12.22 with nftables TProxy kernel support.
 
 Validation on one target does not imply support for every router. New targets
 should be added only after the same release gate passes and the result is
 recorded without private router data.
+
+## Unreleased reliable-domain-routing evidence
+
+- transactional switch from dnsmasq/dnsproxy to dnsmasq/sing-box/dnsproxy;
+- selected DNS answers remained stable across sing-box restarts;
+- router probes bound to the LAN source address kept control traffic on the
+  home WAN while TikTok HTTPS completed through FakeIP and the outbound IKEv2
+  address;
+- PBR restart refreshed the sing-box rule-set without changing FakeIP mappings;
+- managed DNS re-apply kept dnsmasq on the FakeIP resolver;
+- a stale installed CHILD_SA was detected during testing, reconnected without a
+  router reboot, and the new data-plane probe reported zero failures;
+- router reboot validation remains intentionally pending.
 
 ## 1.0.0-r5 evidence
 

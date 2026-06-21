@@ -1070,6 +1070,14 @@ init_client_secret
 # surfacing only the meaningful failure reason to the caller (and the LuCI UI).
 initiate_outbound() {
 	_err="$(swanctl --initiate --child proxy4 --timeout 20 2>&1 >/dev/null)" && return 0
+	# A busy peer can complete IKE_AUTH immediately after the VICI timeout.
+	# Check runtime truth briefly before reporting a failed reconnect.
+	_wait=0
+	while [ "$_wait" -lt 8 ]; do
+		has_outbound_sa && return 0
+		_wait=$((_wait + 1))
+		sleep 1
+	done
 	_reason="$(printf '%s\n' "$_err" \
 		| grep -viE 'failed to load|no plugin file|_plugin_create' \
 		| grep -iE 'initiate|establish|auth|propos|timeout|retransmit|no ike|unable|notify|peer|certificate|fail' \

@@ -16,7 +16,8 @@ Is this project compatible with [ikev2-manager-ubuntu](https://github.com/Nikiti
 ## Features
 
 - outbound IPv4 IKEv2/EAP client on an XFRM interface;
-- domain-based routing through PBR and `dnsmasq-full` nftsets;
+- reliable domain-based routing through sing-box FakeIP and nftables TProxy,
+  with the existing PBR nftset policy retained as a migration fallback;
 - full-tunnel and direct-WAN overrides for individual devices;
 - fail-closed routing when the outbound tunnel is unavailable;
 - optional inbound IKEv2/EAP server for phones and other remote devices;
@@ -33,7 +34,7 @@ Is this project compatible with [ikev2-manager-ubuntu](https://github.com/Nikiti
 - official OpenWrt `24.10.x`;
 - firewall4;
 - official OpenWrt package feeds;
-- enough storage for strongSwan, PBR, `dnsmasq-full` and optional `dnsproxy`.
+- enough storage for strongSwan, PBR, sing-box, `dnsmasq-full` and `dnsproxy`.
 
 Vendor firmware, snapshots and OpenWrt 25.12+ are currently rejected. Hardware
 support is checked by capabilities rather than by a fixed router-model list.
@@ -81,9 +82,20 @@ keeps tunnel settings, users and domain lists.
 
 ## DNS and domain routing
 
-`dnsmasq-full` remains the resolver for LAN and inbound VPN clients because PBR
-uses its DNS answers to populate nftsets. Optional managed DNS forwards public
-queries to a local `dnsproxy` instance.
+`dnsmasq-full` remains the resolver presented to LAN and inbound VPN clients.
+In reliable mode, selected domains receive stable addresses from the private
+`198.18.0.0/15` benchmark range. nftables intercepts only connections to those
+addresses, and sing-box resolves and sends them through IKEv2 only for networks
+covered by the domain policy. Ordinary destinations never enter the proxy path.
+
+The dnsmasq cache is disabled in this mode, while sing-box keeps a persistent
+FakeIP mapping so reconnects, service restarts and router boots do not
+reclassify an active domain onto WAN. The previous resolver is preserved as the
+sing-box upstream and is restored transactionally when reliable mode is
+disabled. The legacy PBR nftset policy remains active during migration so
+connections opened against older public DNS answers are still classified.
+
+Optional managed DNS forwards public queries to a local `dnsproxy` instance.
 
 Standard DoH is the default encrypted transport. HTTP/3 and DoQ options are
 available but marked experimental because their behavior depends more heavily
@@ -124,8 +136,10 @@ See [docs/DOMAIN_SOURCES.md](docs/DOMAIN_SOURCES.md) and [NOTICE](NOTICE).
 - router backups still contain reversible VPN credentials and private keys and
   must be treated as secrets.
 
-The application cannot protect traffic that bypasses router DNS, and it does
-not configure the remote IKEv2 gateway.
+The application cannot classify names that bypass router DNS. Browser DoH,
+Android Private DNS and Apple Private Relay must be disabled when deterministic
+domain routing is required. The application does not configure the remote
+IKEv2 gateway.
 
 ## Build and validation
 

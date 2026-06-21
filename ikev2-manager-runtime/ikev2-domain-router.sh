@@ -1,0 +1,672 @@
+#!/bin/sh
+
+set -u
+
+config='ikev2-manager'
+domain_file='/etc/pbr-ikev2-domains.txt'
+config_file='/etc/ikev2-manager/domain-router.json'
+ruleset_file='/etc/ikev2-manager/domain-router-rules.json'
+work_dir='/etc/ikev2-manager/domain-router'
+state_file='/var/run/ikev2-domain-router.status'
+log_file='/tmp/ikev2-domain-router.log'
+lock_dir='/var/run/ikev2-domain-router.lock'
+dns_address='127.0.0.42'
+dns_port='53'
+tproxy_address='127.0.0.1'
+tproxy_port='1602'
+fakeip_range='198.18.0.0/15'
+tproxy_mark='0x400000'
+tproxy_mask='0xff0000'
+tproxy_table='100'
+nft_table='ikev2_domain_router'
+
+die() {
+	printf '%s\n' "$*" >&2
+	exit 1
+}
+
+getv() {
+	uci -q get "$config.$1.$2" 2>/dev/null || true
+}
+
+defaultv() {
+	value="$(getv "$1" "$2")"
+	[ -n "$value" ] && printf '%s\n' "$value" || printf '%s\n' "$3"
+}
+
+write_status() {
+	{
+		[ -z "${ACTION_ID:-}" ] || printf 'action_id=%s\n' "$ACTION_ID"
+		printf 'state=%s\n' "$1"
+		printf 'updated=%s\n' "$(date +%s)"
+		[ -z "${2:-}" ] || printf 'message=%s\n' "$2"
+	} >"${state_file}.new"
+	mv "${state_file}.new" "$state_file"
+}
+
+init_config() {
+	uci -q get "$config.domains" >/dev/null 2>&1 || {
+		uci set "$config.domains=domains"
+		uci set "$config.domains.engine=nftset"
+		uci set "$config.domains.fakeip_ttl=60"
+		uci set "$config.domains.cache_path=/etc/ikev2-manager/domain-router-cache.db"
+		uci commit "$config"
+	}
+}
+
+with_lock() {
+	action="$1"
+	shift
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		write_status error 'Another domain-routing action is already running'
+		return 1
+	fi
+	trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT INT TERM
+	"$action" "$@"
+	result=$?
+	trap - EXIT INT TERM
+	rmdir "$lock_dir" 2>/dev/null || true
+	return "$result"
+}
+
+json_array_file() {
+	awk '
+		BEGIN { printf "["; first = 1 }
+		{
+			gsub(/\r/, "")
+			gsub(/^[ \t]+|[ \t]+$/, "")
+			if ($0 == "" || substr($0, 1, 1) == "#")
+				next
+			if (!first)
+				printf ","
+			printf "\"%s\"", $0
+			first = 0
+		}
+		END { printf "]" }
+	' "$1"
+}
+
+json_array_words() {
+	printf '%s\n' "$@" | awk '
+		BEGIN { printf "["; first = 1 }
+		NF {
+			if (!first)
+				printf ","
+			printf "\"%s\"", $0
+			first = 0
+		}
+		END { printf "]" }
+	'
+}
+
+network_cidr() {
+	interface="$1"
+	device="$(ubus call "network.interface.$interface" status 2>/dev/null |
+		jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+	[ -n "$device" ] ||
+		device="$(ubus call "network.interface.$interface" status 2>/dev/null |
+			jsonfilter -e '@.device' 2>/dev/null || true)"
+	[ -n "$device" ] || return 1
+	ip -4 route show dev "$device" scope link 2>/dev/null |
+		awk '$1 ~ /^[0-9.]+\/[0-9]+$/ { print $1; exit }'
+}
+
+covered_sources() {
+	for interface in $(uci -q get "$config.globals.source_interface" 2>/dev/null); do
+		network_cidr "$interface" || true
+	done
+	if [ "$(defaultv globals source_include_vpn 1)" = 1 ] &&
+	   [ "$(defaultv server enabled 0)" = 1 ]; then
+		/usr/libexec/ikev2-manager-system gateway-network 2>/dev/null || true
+	fi
+	src="$(uci -q get pbr.ikev2pbr_domains.src_addr 2>/dev/null || true)"
+	for address in $src; do
+		case "$address" in
+			@*) ;;
+			*) printf '%s\n' "$address" ;;
+		esac
+	done
+}
+
+excluded_sources() {
+	for section in $(uci show pbr 2>/dev/null |
+		sed -n 's/^pbr\.\([^.=]*\)=policy$/\1/p'); do
+		name="$(uci -q get "pbr.$section.name" 2>/dev/null || true)"
+		case "$name" in
+			'VPN Exclude: '*)
+				uci -q get "pbr.$section.src_addr" 2>/dev/null || true
+				;;
+		esac
+	done
+}
+
+upstream_dns() {
+	if [ "$(defaultv domains dns_saved 0)" = 1 ]; then
+		servers="$(uci -q get "$config.domains.prev_server" 2>/dev/null || true)"
+		noresolv="$(defaultv domains prev_noresolv 0)"
+	else
+		servers="$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)"
+		noresolv="$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)"
+	fi
+	for server in $servers; do
+		case "$server" in
+			/* | 127.0.0.1 | 127.0.0.1#53 | "$dns_address" | "$dns_address#$dns_port")
+				continue
+				;;
+		esac
+		host="${server%%#*}"
+		port="${server#*#}"
+		[ "$port" != "$server" ] || port=53
+		if printf '%s\n' "$host" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' &&
+		   printf '%s\n' "$port" | grep -Eq '^[0-9]+$'; then
+			printf '%s %s\n' "$host" "$port"
+			return 0
+		fi
+	done
+	if [ "$noresolv" != 1 ]; then
+		host="$(awk '$1 == "nameserver" && $2 ~ /^[0-9]+\./ { print $2; exit }' \
+			/tmp/resolv.conf.d/resolv.conf.auto 2>/dev/null)"
+		case "$host" in
+			'' | 127.0.0.1 | "$dns_address") ;;
+			*) printf '%s 53\n' "$host"; return 0 ;;
+		esac
+	fi
+	die 'Unable to determine the DNS upstream used before FakeIP'
+}
+
+local_devices() {
+	ubus call network.interface dump 2>/dev/null |
+		jsonfilter -e '@.interface[*].interface' 2>/dev/null |
+		while IFS= read -r interface; do
+			case "$interface" in
+				'' | loopback | lo | wan | wan6 | ikev2out) continue ;;
+			esac
+			device="$(ubus call "network.interface.$interface" status 2>/dev/null |
+				jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+			[ -n "$device" ] ||
+				device="$(ubus call "network.interface.$interface" status 2>/dev/null |
+					jsonfilter -e '@.device' 2>/dev/null || true)"
+			[ -n "$device" ] && printf '%s\n' "$device"
+		done
+	[ "$(defaultv server enabled 0)" = 1 ] && printf 'ipsec-in\n'
+}
+
+render_ruleset() {
+	[ -s "$domain_file" ] || die 'Active domain list is empty'
+	mkdir -p "${ruleset_file%/*}"
+	domains="$(json_array_file "$domain_file")"
+	printf '{"version":3,"rules":[{"domain_suffix":%s}]}\n' "$domains" \
+		>"${ruleset_file}.new"
+	chmod 600 "${ruleset_file}.new"
+	mv "${ruleset_file}.new" "$ruleset_file"
+}
+
+render_config() {
+	render_ruleset
+	mkdir -p "$work_dir"
+	ttl="$(defaultv domains fakeip_ttl 60)"
+	cache_path="$(defaultv domains cache_path /etc/ikev2-manager/domain-router-cache.db)"
+	upstream="$(upstream_dns)" || return 1
+	set -- $upstream
+	upstream_host="$1"
+	upstream_port="$2"
+	covered="$(covered_sources | sort -u | json_array_file /dev/stdin)"
+	excluded="$(excluded_sources | sort -u | json_array_file /dev/stdin)"
+	[ "$covered" != '[]' ] || die 'No source networks are enabled for domain routing'
+	excluded_rule=''
+	if [ "$excluded" != '[]' ]; then
+		excluded_rule='
+      {
+        "inbound": [ "tproxy-in" ],
+        "source_ip_cidr": '"$excluded"',
+        "action": "route",
+        "outbound": "direct-out"
+      },'
+	fi
+
+	cat >"${config_file}.new" <<EOF
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "upstream",
+        "server": "$upstream_host",
+        "server_port": $upstream_port
+      },
+      {
+        "type": "fakeip",
+        "tag": "fakeip",
+        "inet4_range": "$fakeip_range"
+      }
+    ],
+    "rules": [
+      {
+        "query_type": [ "HTTPS" ],
+        "action": "reject"
+      },
+      {
+        "domain": [ "use-application-dns.net" ],
+        "action": "reject"
+      },
+      {
+        "rule_set": [ "ikev2-domains" ],
+        "action": "route",
+        "server": "fakeip",
+        "rewrite_ttl": $ttl
+      }
+    ],
+    "final": "upstream",
+    "strategy": "ipv4_only",
+    "independent_cache": true
+  },
+  "inbounds": [
+    {
+      "type": "direct",
+      "tag": "dns-in",
+      "listen": "$dns_address",
+      "listen_port": $dns_port
+    },
+    {
+      "type": "tproxy",
+      "tag": "tproxy-in",
+      "listen": "$tproxy_address",
+      "listen_port": $tproxy_port
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct-out",
+      "domain_resolver": "upstream"
+    },
+    {
+      "type": "direct",
+      "tag": "ikev2-out",
+      "bind_interface": "ipsec-out",
+      "routing_mark": "0x020000",
+      "domain_resolver": "upstream"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [ "dns-in" ],
+        "action": "hijack-dns"
+      },
+      {
+        "inbound": [ "tproxy-in" ],
+        "action": "sniff",
+        "timeout": "300ms"
+      },
+$excluded_rule
+      {
+        "inbound": [ "tproxy-in" ],
+        "source_ip_cidr": $covered,
+        "rule_set": [ "ikev2-domains" ],
+        "action": "route",
+        "outbound": "ikev2-out"
+      },
+      {
+        "inbound": [ "tproxy-in" ],
+        "action": "route",
+        "outbound": "direct-out"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "local",
+        "tag": "ikev2-domains",
+        "format": "source",
+        "path": "$ruleset_file"
+      }
+    ],
+    "final": "direct-out",
+    "default_domain_resolver": "upstream"
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "$cache_path",
+      "store_fakeip": true
+    }
+  }
+}
+EOF
+	chmod 600 "${config_file}.new"
+	mv "${config_file}.new" "$config_file"
+}
+
+check_config() {
+	command -v sing-box >/dev/null 2>&1 || die 'sing-box is not installed'
+	render_config
+	sing-box check -c "$config_file"
+}
+
+backup_generated() {
+	backup_dir="$1"
+	mkdir -p "$backup_dir"
+	[ -s "$config_file" ] && cp "$config_file" "$backup_dir/config.json"
+	[ -s "$ruleset_file" ] && cp "$ruleset_file" "$backup_dir/rules.json"
+}
+
+restore_generated() {
+	backup_dir="$1"
+	if [ -s "$backup_dir/config.json" ]; then
+		cp "$backup_dir/config.json" "${config_file}.restore"
+		mv "${config_file}.restore" "$config_file"
+	fi
+	if [ -s "$backup_dir/rules.json" ]; then
+		cp "$backup_dir/rules.json" "${ruleset_file}.restore"
+		mv "${ruleset_file}.restore" "$ruleset_file"
+	fi
+}
+
+nft_stop() {
+	nft delete table inet "$nft_table" >/dev/null 2>&1 || true
+	while ip -4 rule del fwmark "$tproxy_mark/$tproxy_mask" \
+		table "$tproxy_table" priority 100 2>/dev/null; do :; done
+	ip -4 route flush table "$tproxy_table" >/dev/null 2>&1 || true
+}
+
+nft_start() {
+	nft_stop
+	devices="$(local_devices | sort -u)"
+	[ -n "$devices" ] || die 'No local interfaces found for FakeIP interception'
+	device_set="$(json_array_words $devices | tr '[]' '{}')"
+
+	nft -f - <<EOF
+table inet $nft_table {
+  set local_devices {
+    type ifname
+    elements = $device_set
+  }
+
+  chain prerouting {
+    type filter hook prerouting priority -151; policy accept;
+    meta mark & $tproxy_mask == $tproxy_mark meta l4proto tcp tproxy ip to $tproxy_address:$tproxy_port counter accept
+    meta mark & $tproxy_mask == $tproxy_mark meta l4proto udp tproxy ip to $tproxy_address:$tproxy_port counter accept
+    iifname @local_devices ip daddr $fakeip_range meta l4proto tcp meta mark set $tproxy_mark tproxy ip to $tproxy_address:$tproxy_port counter accept
+    iifname @local_devices ip daddr $fakeip_range meta l4proto udp meta mark set $tproxy_mark tproxy ip to $tproxy_address:$tproxy_port counter accept
+  }
+
+  chain output {
+    type route hook output priority -151; policy accept;
+    ip daddr $fakeip_range meta l4proto tcp meta mark set $tproxy_mark counter
+    ip daddr $fakeip_range meta l4proto udp meta mark set $tproxy_mark counter
+  }
+}
+EOF
+	ip -4 route replace local 0.0.0.0/0 dev lo table "$tproxy_table"
+	ip -4 rule add fwmark "$tproxy_mark/$tproxy_mask" \
+		table "$tproxy_table" priority 100
+}
+
+save_dnsmasq() {
+	[ "$(defaultv domains dns_saved 0)" = 1 ] && return 0
+	uci set "$config.domains.dns_saved=1"
+	uci set "$config.domains.prev_noresolv=$(uci -q get dhcp.@dnsmasq[0].noresolv 2>/dev/null || echo 0)"
+	uci set "$config.domains.prev_cachesize=$(uci -q get dhcp.@dnsmasq[0].cachesize 2>/dev/null || echo 150)"
+	uci -q delete "$config.domains.prev_server" || true
+	for server in $(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null); do
+		uci add_list "$config.domains.prev_server=$server"
+	done
+	uci commit "$config"
+}
+
+clear_dnsmasq_snapshot() {
+	for option in dns_saved prev_noresolv prev_cachesize prev_server; do
+		uci -q delete "$config.domains.$option" || true
+	done
+	uci commit "$config"
+}
+
+use_fakeip_dns() {
+	save_dnsmasq
+	uci set dhcp.@dnsmasq[0].noresolv='1'
+	uci set dhcp.@dnsmasq[0].cachesize='0'
+	uci -q delete dhcp.@dnsmasq[0].server || true
+	uci add_list "dhcp.@dnsmasq[0].server=$dns_address"
+	uci commit dhcp
+	/etc/init.d/dnsmasq restart
+}
+
+restore_dnsmasq() {
+	[ "$(defaultv domains dns_saved 0)" = 1 ] || return 0
+	uci set "dhcp.@dnsmasq[0].noresolv=$(defaultv domains prev_noresolv 0)"
+	uci set "dhcp.@dnsmasq[0].cachesize=$(defaultv domains prev_cachesize 150)"
+	uci -q delete dhcp.@dnsmasq[0].server || true
+	for server in $(uci -q get "$config.domains.prev_server" 2>/dev/null); do
+		uci add_list "dhcp.@dnsmasq[0].server=$server"
+	done
+	uci commit dhcp
+	/etc/init.d/dnsmasq restart
+	clear_dnsmasq_snapshot
+}
+
+is_fakeip() {
+	printf '%s\n' "$1" | grep -Eq '^198\.(18|19)\.'
+}
+
+lookup_address() {
+	nslookup "$1" "$2" 2>/dev/null |
+		sed -n 's/^Address[^:]*:[[:space:]]*//p' |
+		grep -E '^[0-9]+\.' | tail -n1
+}
+
+selected_test_domain() {
+	sed -n '/^[[:space:]]*#/d; /^[[:space:]]*$/d; { s/[[:space:]]//g; p; q; }' \
+		"$domain_file"
+}
+
+wait_for_dns() {
+	tries=0
+	while [ "$tries" -lt 15 ]; do
+		if netstat -ln 2>/dev/null | grep -q "$dns_address:$dns_port"; then
+			return 0
+		fi
+		tries=$((tries + 1))
+		sleep 1
+	done
+	return 1
+}
+
+validate_dns_server() {
+	server="${1:-$dns_address}"
+	selected="$(selected_test_domain)"
+	[ -n "$selected" ] || die 'No selected domain available for validation'
+	selected_ip="$(lookup_address "$selected" "$server")"
+	is_fakeip "$selected_ip" ||
+		die "Selected domain did not receive FakeIP: $selected -> ${selected_ip:-none}"
+	control='openwrt.org'
+	grep -qx "$control" "$domain_file" 2>/dev/null && control='example.com'
+	control_ip="$(lookup_address "$control" "$server")"
+	[ -n "$control_ip" ] && ! is_fakeip "$control_ip" ||
+		die "Control domain did not receive a real address: $control -> ${control_ip:-none}"
+}
+
+wait_for_query() {
+	server="$1"
+	domain="$2"
+	tries=0
+	while [ "$tries" -lt 15 ]; do
+		[ -n "$(lookup_address "$domain" "$server")" ] && return 0
+		tries=$((tries + 1))
+		sleep 1
+	done
+	return 1
+}
+
+prepare() {
+	init_config
+	check_config
+	nft_start
+}
+
+refresh() {
+	init_config
+	[ "$(defaultv domains engine nftset)" = fakeip ] || return 0
+	backup="/tmp/ikev2-domain-router-refresh.$$"
+	backup_generated "$backup"
+	if ! check_config; then
+		restore_generated "$backup"
+		rm -rf "$backup"
+		write_status error 'New domain rules failed validation; previous rules remain active'
+		return 1
+	fi
+	if ! /etc/init.d/ikev2-domain-router restart ||
+	   ! wait_for_dns ||
+	   ! validate_dns_server "$dns_address"; then
+		restore_generated "$backup"
+		/etc/init.d/ikev2-domain-router restart >/dev/null 2>&1 || true
+		rm -rf "$backup"
+		write_status error 'New domain rules failed at runtime; previous rules restored'
+		return 1
+	fi
+	nft_start
+	rm -rf "$backup"
+	write_status active 'FakeIP domain rules refreshed'
+}
+
+adopt_upstream() {
+	init_config
+	[ "$(defaultv domains engine nftset)" = fakeip ] || return 0
+	rollback="/tmp/ikev2-domain-router-upstream.$$"
+	uci export "$config" >"$rollback"
+	clear_dnsmasq_snapshot
+	save_dnsmasq
+	if ! refresh ||
+	   ! use_fakeip_dns ||
+	   ! wait_for_query 127.0.0.1 openwrt.org ||
+	   ! validate_dns_server 127.0.0.1; then
+		uci import "$config" <"$rollback"
+		uci commit "$config"
+		refresh >/dev/null 2>&1 || true
+		use_fakeip_dns >/dev/null 2>&1 || true
+		rm -f "$rollback"
+		write_status error 'DNS upstream update failed; previous FakeIP resolver restored'
+		return 1
+	fi
+	rm -f "$rollback"
+	write_status active 'FakeIP DNS upstream updated'
+}
+
+activate() {
+	init_config
+	check_config
+	uci set "$config.domains.engine=fakeip"
+	uci commit "$config"
+	/etc/init.d/ikev2-domain-router enable >/dev/null 2>&1 || true
+	/etc/init.d/ikev2-domain-router restart
+	if ! wait_for_dns || ! validate_dns_server "$dns_address"; then
+		uci set "$config.domains.engine=nftset"
+		uci commit "$config"
+		/etc/init.d/ikev2-domain-router stop >/dev/null 2>&1 || true
+		write_status error 'FakeIP resolver validation failed; existing DNS was not changed'
+		return 1
+	fi
+
+	if ! nft_start; then
+		uci set "$config.domains.engine=nftset"
+		uci commit "$config"
+		/etc/init.d/ikev2-domain-router stop >/dev/null 2>&1 || true
+		nft_stop
+		write_status error 'TProxy setup failed; existing DNS was not changed'
+		return 1
+	fi
+
+	if ! use_fakeip_dns ||
+	   ! wait_for_query 127.0.0.1 openwrt.org ||
+	   ! validate_dns_server 127.0.0.1; then
+		restore_dnsmasq || true
+		nft_stop
+		uci set "$config.domains.engine=nftset"
+		uci commit "$config"
+		/etc/init.d/ikev2-domain-router stop >/dev/null 2>&1 || true
+		write_status error 'DNS cutover failed; previous resolver restored'
+		return 1
+	fi
+	write_status active 'FakeIP domain routing is active'
+}
+
+deactivate() {
+	restore_dnsmasq || true
+	nft_stop
+	uci set "$config.domains.engine=nftset"
+	uci commit "$config"
+	/etc/init.d/ikev2-domain-router disable >/dev/null 2>&1 || true
+	/etc/init.d/ikev2-domain-router stop >/dev/null 2>&1 || true
+	write_status disabled 'Legacy nftset domain routing is active'
+}
+
+fallback() {
+	restore_dnsmasq || true
+	nft_stop
+	uci set "$config.domains.engine=nftset"
+	uci commit "$config"
+	write_status error 'FakeIP startup failed; previous DNS was restored'
+}
+
+run_async() {
+	ACTION_ID="${2:-}"
+	action="$1"
+	exec >>"$log_file" 2>&1
+	write_status running "Domain-routing action: $action"
+	if with_lock "$action"; then
+		return 0
+	fi
+	write_status error "Domain-routing action failed: $action"
+	return 1
+}
+
+schedule() {
+	action="$1"
+	ACTION_ID="$(date +%s)-$$"
+	write_status running "Starting domain-routing action: $action"
+	if command -v start-stop-daemon >/dev/null 2>&1; then
+		start-stop-daemon -b -q -S -x "$0" -- _run "$action" "$ACTION_ID"
+	else
+		setsid "$0" _run "$action" "$ACTION_ID" </dev/null >/dev/null 2>&1 &
+	fi
+	printf 'action_id=%s\n' "$ACTION_ID"
+}
+
+status() {
+	init_config
+	printf 'engine=%s\n' "$(defaultv domains engine nftset)"
+	printf 'service=%s\n' "$(
+		/etc/init.d/ikev2-domain-router running >/dev/null 2>&1 &&
+			echo running || echo stopped
+	)"
+	printf 'dnsmasq_upstream=%s\n' "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)"
+	printf 'dnsmasq_cache=%s\n' "$(uci -q get dhcp.@dnsmasq[0].cachesize 2>/dev/null || true)"
+	printf 'nft=%s\n' "$(nft list table inet "$nft_table" >/dev/null 2>&1 && echo active || echo missing)"
+	printf 'rule=%s\n' "$(ip -4 rule show | grep -q "fwmark $tproxy_mark/$tproxy_mask.*lookup $tproxy_table" &&
+		echo active || echo missing)"
+	cat "$state_file" 2>/dev/null || true
+}
+
+case "${1:-}" in
+	render) init_config; render_config ;;
+	check) init_config; check_config ;;
+	prepare) prepare ;;
+	refresh) with_lock refresh >>"$log_file" 2>&1 ;;
+	adopt-upstream) with_lock adopt_upstream >>"$log_file" 2>&1 ;;
+	activate) with_lock activate >>"$log_file" 2>&1 ;;
+	deactivate) with_lock deactivate >>"$log_file" 2>&1 ;;
+	fallback) fallback >>"$log_file" 2>&1 ;;
+	activate-async) schedule activate ;;
+	deactivate-async) schedule deactivate ;;
+	refresh-async) schedule refresh ;;
+	_run) run_async "${2:-}" "${3:-}" ;;
+	nft-start) nft_start ;;
+	nft-stop) nft_stop ;;
+	status) status ;;
+	*)
+		die 'Usage: ikev2-domain-router {render|check|prepare|refresh|adopt-upstream|activate|deactivate|fallback|activate-async|deactivate-async|refresh-async|nft-start|nft-stop|status}'
+		;;
+esac

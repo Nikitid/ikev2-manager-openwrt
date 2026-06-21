@@ -318,6 +318,7 @@ doctor() {
 	check_command jsonfilter jsonfilter
 	check_command swanmon swanmon
 	check_command dnsproxy dnsproxy
+	check_command sing_box sing-box
 	if command -v curl >/dev/null 2>&1 && curl --version >/dev/null 2>&1; then
 		printf 'curl=ok\n'
 	else
@@ -402,6 +403,12 @@ doctor() {
 		printf 'dnsmasq_nftset=missing\n'
 		ok=0
 	fi
+	if lsmod 2>/dev/null | grep -Eq '^(nft_tproxy|nf_tproxy_ipv4) '; then
+		printf 'nft_tproxy=ok\n'
+	else
+		printf 'nft_tproxy=missing\n'
+		ok=0
+	fi
 
 	for plugin in kernel-netlink vici openssl eap-mschapv2 x509; do
 		if find /usr/lib/ipsec/plugins -name "libstrongswan-${plugin}.so" -print 2>/dev/null |
@@ -422,6 +429,7 @@ runtime_packages() {
 	cat <<'EOF'
 pbr
 dnsproxy
+sing-box
 strongswan
 strongswan-charon
 strongswan-swanctl
@@ -446,6 +454,8 @@ strongswan-mod-socket-default
 strongswan-mod-vici
 strongswan-mod-x509
 kmod-xfrm-interface
+kmod-nft-tproxy
+kmod-nf-tproxy
 ip-full
 openssl-util
 curl
@@ -555,7 +565,7 @@ run_install_deps() {
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
 	fi
 
-	deps_status running 'Installing strongSwan, PBR and XFRM packages...'
+	deps_status running 'Installing strongSwan, PBR, sing-box and XFRM packages...'
 	packages="$(runtime_packages | tr '\n' ' ')"
 	if ! opkg install $packages; then
 		deps_status error 'Package installation failed; see /tmp/ikev2-manager-deps.log'
@@ -603,9 +613,12 @@ run_remove_deps() {
 	swanctl --terminate --ike proxy-out --timeout 3 >/dev/null 2>&1 || true
 	swanctl --terminate --ike ikev2-in --timeout 3 >/dev/null 2>&1 || true
 	/etc/init.d/pbr stop >/dev/null 2>&1 || true
+	if [ -x /usr/libexec/ikev2-domain-router ]; then
+		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || true
+	fi
 
 	deps_status running 'Removing strongSwan, PBR and XFRM packages...'
-	removable='pbr strongswan strongswan-charon strongswan-swanctl strongswan-mod-aes strongswan-mod-attr strongswan-mod-constraints strongswan-mod-eap-identity strongswan-mod-eap-mschapv2 strongswan-mod-gcm strongswan-mod-gmp strongswan-mod-hmac strongswan-mod-kdf strongswan-mod-kernel-netlink strongswan-mod-md4 strongswan-mod-openssl strongswan-mod-pem strongswan-mod-pkcs1 strongswan-mod-pubkey strongswan-mod-random strongswan-mod-sha2 strongswan-mod-socket-default strongswan-mod-vici strongswan-mod-x509 kmod-xfrm-interface swanmon'
+	removable='pbr sing-box strongswan strongswan-charon strongswan-swanctl strongswan-mod-aes strongswan-mod-attr strongswan-mod-constraints strongswan-mod-eap-identity strongswan-mod-eap-mschapv2 strongswan-mod-gcm strongswan-mod-gmp strongswan-mod-hmac strongswan-mod-kdf strongswan-mod-kernel-netlink strongswan-mod-md4 strongswan-mod-openssl strongswan-mod-pem strongswan-mod-pkcs1 strongswan-mod-pubkey strongswan-mod-random strongswan-mod-sha2 strongswan-mod-socket-default strongswan-mod-vici strongswan-mod-x509 kmod-xfrm-interface kmod-nft-tproxy kmod-nf-tproxy swanmon'
 	opkg remove --force-depends $removable >/dev/null 2>&1 || true
 
 	doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
@@ -963,6 +976,7 @@ save_dns_state() {
 
 restore_dns_state() {
 	dir="$1"
+	restart_dnsmasq="${2:-1}"
 	[ -d "$dir" ] || return 0
 	for package in dnsproxy dhcp; do
 		[ -s "$dir/$package.uci" ] || continue
@@ -981,7 +995,9 @@ restore_dns_state() {
 	else
 		/etc/init.d/dnsproxy stop >/dev/null 2>&1 || true
 	fi
-	/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+	if [ "$restart_dnsmasq" = 1 ]; then
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+	fi
 }
 
 ensure_dns_original() {
@@ -1055,10 +1071,19 @@ dns_apply() {
 	fallback="$(normalize_list "$6")"
 	[ "$managed" = 0 ] || [ "$managed" = 1 ] || die 'Invalid DNS management mode'
 	valid_name "$provider" || die 'Invalid DNS provider'
+	fakeip_active=0
+	if [ "$(getv domains engine)" = fakeip ] &&
+	   [ -x /usr/libexec/ikev2-domain-router ]; then
+		fakeip_active=1
+	fi
 
 	if [ "$managed" = 0 ]; then
 		if [ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ]; then
-			restore_dns_state "$dns_original_dir"
+			restore_dns_state "$dns_original_dir" "$([ "$fakeip_active" = 1 ] && echo 0 || echo 1)"
+			if [ "$fakeip_active" = 1 ]; then
+				/usr/libexec/ikev2-domain-router adopt-upstream ||
+					die 'Original DNS was restored, but FakeIP could not adopt its upstream'
+			fi
 		fi
 		uci set "$config.dns.managed=0"
 		uci commit "$config"
@@ -1106,9 +1131,15 @@ dns_apply() {
 	uci set dnsproxy.cache.size='65535'
 	uci commit dnsproxy
 
-	uci set dhcp.@dnsmasq[0].noresolv='1'
-	set_uci_list dhcp '@dnsmasq[0]' server '127.0.0.1#5453'
-	uci commit dhcp
+	if [ "$fakeip_active" = 1 ]; then
+		uci set "$config.domains.prev_noresolv=1"
+		uci -q delete "$config.domains.prev_server" || true
+		uci add_list "$config.domains.prev_server=127.0.0.1#5453"
+	else
+		uci set dhcp.@dnsmasq[0].noresolv='1'
+		set_uci_list dhcp '@dnsmasq[0]' server '127.0.0.1#5453'
+		uci commit dhcp
+	fi
 
 	uci set "$config.dns.managed=1"
 	uci set "$config.dns.protocol=$protocol"
@@ -1120,11 +1151,17 @@ dns_apply() {
 
 	/etc/init.d/dnsproxy enable >/dev/null 2>&1 || true
 	if ! /etc/init.d/dnsproxy restart >/dev/null 2>&1 ||
-		! /etc/init.d/dnsmasq restart >/dev/null 2>&1 ||
+		{ [ "$fakeip_active" = 1 ] &&
+			! /usr/libexec/ikev2-domain-router refresh; } ||
+		{ [ "$fakeip_active" != 1 ] &&
+			! /etc/init.d/dnsmasq restart >/dev/null 2>&1; } ||
 		! dns_query_ok; then
 		restore_dns_state "$rollback"
 		uci import "$config" <"$rollback/$config.uci"
 		uci commit "$config"
+		if [ "$fakeip_active" = 1 ]; then
+			/usr/libexec/ikev2-domain-router refresh >/dev/null 2>&1 || true
+		fi
 		rm -rf "$rollback"
 		die 'DNS validation failed; previous resolver configuration was restored'
 	fi
@@ -1211,6 +1248,9 @@ adopt_legacy() {
 }
 
 remove_managed() {
+	if [ -x /usr/libexec/ikev2-domain-router ]; then
+		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || true
+	fi
 	delete_prefixed_sections firewall ikev2pbr_
 	delete_prefixed_sections firewall ikev2access_
 	uci commit firewall
@@ -1278,6 +1318,11 @@ apply_system() {
 		die 'PBR fail-closed route validation failed'
 	ensure_ipv6_failfast
 	/etc/init.d/ikev2-health start >/dev/null 2>&1 || true
+	if [ "$(getv domains engine)" = fakeip ] &&
+	   [ -x /usr/libexec/ikev2-domain-router ]; then
+		/usr/libexec/ikev2-domain-router refresh ||
+			die 'FakeIP domain router refresh failed'
+	fi
 }
 
 # Narrow runtime apply for Inbound Server saves. Most server edits only need a
@@ -1306,6 +1351,12 @@ apply_server_runtime() {
 		die 'fw4 forward chain has no zone forwarding after server apply'
 	ensure_ipv6_failfast
 	/etc/init.d/ikev2-health start >/dev/null 2>&1 || true
+	if [ "$needs_pbr" = 1 ] &&
+	   [ "$(getv domains engine)" = fakeip ] &&
+	   [ -x /usr/libexec/ikev2-domain-router ]; then
+		/usr/libexec/ikev2-domain-router refresh ||
+			die 'FakeIP domain router refresh failed'
+	fi
 }
 
 show_config() {
