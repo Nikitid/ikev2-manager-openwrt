@@ -30,6 +30,8 @@ action_status_file="${IKEV2_ACTION_STATUS:-/var/run/ikev2-manager-action.status}
 action_status_dir="${IKEV2_ACTION_STATUS_DIR:-/var/run/ikev2-manager-actions}"
 action_lock_dir="${IKEV2_ACTION_LOCK:-/var/run/ikev2-action.lock}"
 action_lock_status="${IKEV2_ACTION_LOCK_STATUS:-/var/run/ikev2-action.lock.status}"
+auto_connect_lock="${IKEV2_AUTO_CONNECT_LOCK:-/var/run/ikev2-auto-connect.lock}"
+auto_connect_attempt="${IKEV2_AUTO_CONNECT_ATTEMPT:-/var/run/ikev2-auto-connect.attempt}"
 runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-$root/usr/libexec/ikev2-manager.d}"
 
 . "$runtime_lib_dir/actions.sh"
@@ -84,6 +86,8 @@ consume_client_input() {
 	dpd="$(sed -n '6p' "$client_input_file")"
 	mtu="$(sed -n '7p' "$client_input_file")"
 	password="$(sed -n '8p' "$client_input_file")"
+	reconnect_cooldown="$(sed -n '9p' "$client_input_file")"
+	[ -n "$reconnect_cooldown" ] || reconnect_cooldown=15
 	rm -f "$client_input_file"
 
 	[ "$mode" = set ] || [ "$mode" = save ] || die 'Invalid client action'
@@ -102,6 +106,8 @@ consume_client_input() {
 	fi
 	in_range "$dpd" 10 300 || die 'DPD must be 10-300 seconds'
 	in_range "$mtu" 1280 1500 || die 'MTU must be 1280-1500'
+	in_range "$reconnect_cooldown" 15 300 ||
+		die 'Reconnect cooldown must be 15-300 seconds'
 
 	uci set "$uci_config.client.enabled=$enabled"
 	uci set "$uci_config.client.remote_address=$(normalize_host_list "$remote_address")"
@@ -109,6 +115,7 @@ consume_client_input() {
 	uci set "$uci_config.client.username=$username"
 	uci set "$uci_config.client.dpd=$dpd"
 	uci set "$uci_config.client.mtu=$mtu"
+	uci set "$uci_config.client.reconnect_cooldown=$reconnect_cooldown"
 	uci commit "$uci_config"
 	if [ -n "$password" ]; then
 		set_client_secret "$username" "$password"
@@ -317,6 +324,7 @@ init_uci() {
 		uci set "$uci_config.client.username="
 		uci set "$uci_config.client.dpd=30"
 		uci set "$uci_config.client.mtu=1400"
+		uci set "$uci_config.client.reconnect_cooldown=15"
 		uci set "$uci_config.client.custom_config=0"
 	}
 
@@ -1086,6 +1094,70 @@ connect_action() {
 	fi
 }
 
+has_outbound_sa() {
+	swanctl --list-sas --raw 2>/dev/null |
+		grep -q 'name=proxy4[^{}]* state=INSTALLED'
+}
+
+outbound_peer_resolves() {
+	peers="$(normalize_host_list "$(getv client remote_address)")"
+	for peer in $peers; do
+		if valid_ipv4 "$peer" ||
+		   printf '%s' "$peer" | grep -q ':' ||
+		   resolveip -4 -t 3 "$peer" >/dev/null 2>&1; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Bring up an enabled outbound client without tearing down an already healthy
+# SA. This is used by WAN hotplug and the health watcher, so it has its own
+# non-blocking lock and a short failure backoff to avoid duplicate initiations.
+ensure_client_action() {
+	[ -z "$root" ] || return 0
+	[ "$(getv globals configured)" = 1 ] || return 0
+	[ "$(getv client enabled)" = 1 ] || return 0
+	has_outbound_sa && return 0
+	[ ! -d "$action_lock_dir" ] || return 0
+
+	now="$(date +%s)"
+	cooldown="$(getv_default client reconnect_cooldown 15)"
+	in_range "$cooldown" 15 300 || cooldown=15
+	last="$(cat "$auto_connect_attempt" 2>/dev/null || echo 0)"
+	case "$last" in
+		'' | *[!0-9]*) last=0 ;;
+	esac
+	[ $((now - last)) -ge "$cooldown" ] || return 0
+
+	if ! mkdir "$auto_connect_lock" 2>/dev/null; then
+		lock_pid="$(cat "$auto_connect_lock/pid" 2>/dev/null || true)"
+		if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+			return 0
+		fi
+		rm -f "$auto_connect_lock/pid"
+		rmdir "$auto_connect_lock" 2>/dev/null || return 0
+		mkdir "$auto_connect_lock" 2>/dev/null || return 0
+	fi
+	printf '%s\n' "$$" >"$auto_connect_lock/pid"
+	trap 'rm -f "$auto_connect_lock/pid"; rmdir "$auto_connect_lock" 2>/dev/null || true' EXIT INT TERM
+
+	# Recheck after taking the lock: WAN hotplug and the watcher may have raced.
+	has_outbound_sa && return 0
+	[ ! -d "$action_lock_dir" ] || return 0
+	printf '%s\n' "$now" >"$auto_connect_attempt"
+	# Do not spend swanctl's full initiation timeout while boot-time DNS is not
+	# ready yet. The watcher will retry shortly, and hotplug calls us again only
+	# after the WAN has had time to finish resolver/PBR setup.
+	outbound_peer_resolves || return 1
+
+	swanctl_quiet --load-conns >/dev/null || return 1
+	swanctl_quiet --load-creds >/dev/null || return 1
+	initiate_outbound || return 1
+	/usr/libexec/ikev2-sync-vips || :
+	/usr/share/pbr/pbr.user.ikev2out || :
+}
+
 disable_client_action() {
 	swanctl_quiet --terminate --ike proxy-out --timeout 5 >/dev/null 2>&1 || :
 	rm -f /var/run/ikev2-vip4
@@ -1337,6 +1409,8 @@ case "${1:-}" in
 		for key in enabled remote_address remote_id username dpd mtu custom_config; do
 			printf '%s=%s\n' "$key" "$(getv client "$key")"
 		done
+		printf 'reconnect_cooldown=%s\n' \
+			"$(getv_default client reconnect_cooldown 15)"
 		;;
 	client-input)
 		consume_client_input
@@ -1345,6 +1419,9 @@ case "${1:-}" in
 		[ "$(getv globals configured)" = 1 ] || die 'Complete and enable Overview first'
 		[ "$(getv client enabled)" = 1 ] || die 'Outbound client is disabled'
 		start_action connect
+		;;
+	ensure-client)
+		ensure_client_action
 		;;
 	advanced-start)
 		[ "$#" -eq 3 ] || die 'Expected: profile base64'
@@ -1408,6 +1485,6 @@ case "${1:-}" in
 		advanced_reset "$2"
 		;;
 	*)
-		die 'Usage: ikev2-manager {overview|users|users-show|user-secret-set|user-delete|disconnect|disconnect-all|server-get|server-set|server-access-get|server-access-set|server-ensure|client-get|client-input|reconnect-client|action-status|advanced-mode|advanced-read|advanced-start|advanced-reset-start|advanced-set|advanced-reset|reload}'
+		die 'Usage: ikev2-manager {overview|users|users-show|user-secret-set|user-delete|disconnect|disconnect-all|server-get|server-set|server-access-get|server-access-set|server-ensure|client-get|client-input|reconnect-client|ensure-client|action-status|advanced-mode|advanced-read|advanced-start|advanced-reset-start|advanced-set|advanced-reset|reload}'
 		;;
 esac

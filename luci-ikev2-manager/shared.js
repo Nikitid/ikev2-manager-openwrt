@@ -275,6 +275,8 @@ var ru = {
 	'Dead peer detection in seconds.': 'Dead peer detection в секундах.',
 	'XFRM MTU': 'XFRM MTU',
 	'Keep 1400 unless PMTU diagnostics show a problem.': 'Оставьте 1400, если PMTU-диагностика не показывает проблему.',
+	'Reconnect cooldown': 'Пауза между переподключениями',
+	'Minimum delay between automatic connection attempts, in seconds.': 'Минимальная пауза между автоматическими попытками подключения, в секундах.',
 	'Save and reconnect': 'Сохранить и переподключить',
 	'Edit raw config': 'Редактировать raw-конфиг',
 	'Save custom config': 'Сохранить ручной конфиг',
