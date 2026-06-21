@@ -31,7 +31,7 @@ tracked = subprocess.check_output(
 ).splitlines()
 for name in tracked:
     path = Path(name)
-    if ".vscode" in path.parts:
+    if not path.exists():
         continue
     json.loads(path.read_text())
     print(f"json OK: {path}")

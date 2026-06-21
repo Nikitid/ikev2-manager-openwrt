@@ -72,6 +72,22 @@ Then:
 For CLI installation, migration, diagnostics and recovery, see
 [Operations](docs/OPERATIONS.md).
 
+## Support
+
+Use [GitHub Discussions](https://github.com/Nikitid/ikev2-manager-openwrt/discussions)
+for setup questions and
+[GitHub Issues](https://github.com/Nikitid/ikev2-manager-openwrt/issues) for
+reproducible bugs. Before reporting a bug, run:
+
+```sh
+/usr/libexec/ikev2-manager-system doctor
+/usr/libexec/ikev2-manager overview
+```
+
+Remove public IPs, private domains, usernames and credentials from output.
+Never attach a router backup or files from `/etc/ikev2-manager/` and
+`/etc/swanctl/private/`.
+
 ## Policy routing
 
 Reliable mode keeps `dnsmasq-full` as the client resolver and sends public DNS
@@ -131,11 +147,10 @@ Artifacts are written to `dist/`.
 
 ## Documentation
 
-- [Architecture](ARCHITECTURE.md)
+- [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
 - [Security](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
-- [Support](SUPPORT.md)
 - [Changelog](CHANGELOG.md)
 
 ## License
