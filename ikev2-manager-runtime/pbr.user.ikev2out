@@ -22,6 +22,8 @@ ikev2_set="$(
 		grep -v '_user$' | head -n1
 )"
 ikev2_dump="/var/run/pbr-ikev2-set4.dump"
+[ -s "$ikev2_dump" ] ||
+	ikev2_dump="/etc/ikev2-manager/pbr-set4.dump"
 if [ -n "$ikev2_set" ] &&
 	[ -s "$ikev2_dump" ] &&
 	! "$ikev2_nft" list set inet fw4 "$ikev2_set" 2>/dev/null | grep -q 'elements'; then

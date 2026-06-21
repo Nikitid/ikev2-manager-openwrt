@@ -10,6 +10,39 @@ action_lock_status="$global_lock_status"
 . /usr/libexec/ikev2-manager.d/actions.sh
 . /usr/libexec/ikev2-manager.d/routing.sh
 
+drop_reclassified_connections() {
+	command -v conntrack >/dev/null 2>&1 || return 0
+	set_name="$(nft list table inet fw4 2>/dev/null |
+		sed -n 's/^[[:space:]]*set \(pbr_ikev2out_4_dst_ip_[^[:space:]]*\) {.*/\1/p' |
+		grep -v '_user$' | head -n1)"
+	[ -n "$set_name" ] || return 0
+
+	# Existing flow-offloaded sessions retain their old WAN route after a
+	# domain is newly classified. Drop only sessions whose destination now
+	# belongs to the managed PBR set so their next connection is re-evaluated.
+	conntrack -L 2>/dev/null |
+		awk '{
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /^src=/) {
+					for (j = i + 1; j <= NF; j++) {
+						if ($j ~ /^dst=/) {
+							sub(/^dst=/, "", $j)
+							print $j
+							next
+						}
+					}
+				}
+			}
+		}' |
+		sort -u |
+		while IFS= read -r address; do
+			[ -n "$address" ] || continue
+			if nft get element inet fw4 "$set_name" "{ $address }" >/dev/null 2>&1; then
+				conntrack -D -d "$address" >/dev/null 2>&1 || :
+			fi
+		done
+}
+
 (
 	sleep 1
 
@@ -34,6 +67,7 @@ action_lock_status="$global_lock_status"
 		/etc/init.d/ikev2-xfrm start
 		/usr/libexec/ikev2-sync-vips
 		/usr/share/pbr/pbr.user.ikev2out
+		drop_reclassified_connections
 	} >"$log_file" 2>&1
 ) </dev/null >/dev/null 2>&1 &
 

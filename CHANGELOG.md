@@ -7,6 +7,21 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 No changes yet.
 
+## 1.0.0-r5 - 2026-06-21
+
+- Added a locked, rate-limited outbound recovery helper used by WAN hotplug
+  and the health watcher, so a boot-time initiation attempted before WAN is
+  ready is retried automatically once DNS can resolve the configured peer.
+- Added an outbound-tunnel setting for the automatic reconnect cooldown
+  (15-300 seconds).
+- Re-evaluate existing connections after a domain-policy rebuild by dropping
+  only conntrack entries whose destinations now belong to the managed PBR set.
+  This prevents hardware-offloaded sessions from retaining an earlier WAN
+  route after a service is newly selected.
+- Preserve the learned domain-IP set once during an orderly shutdown and
+  restore it on the next boot, so devices with warm DNS caches do not bypass
+  policy routing before repeating their DNS lookups.
+
 ## 1.0.0-r4 - 2026-06-19
 
 - Made `Installed-Size` independent of filesystem block allocation so canonical

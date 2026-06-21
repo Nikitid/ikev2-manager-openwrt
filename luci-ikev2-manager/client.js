@@ -183,6 +183,9 @@ return view.extend({
 		});
 		var dpd = input('number', value.dpd, { 'min': '10', 'max': '300' });
 		var mtu = input('number', value.mtu, { 'min': '1280', 'max': '1500' });
+		var reconnectCooldown = input('number', value.reconnect_cooldown || '15', {
+			'min': '15', 'max': '300'
+		});
 		var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, [
 			_('Save and connect')
 		]);
@@ -255,7 +258,8 @@ return view.extend({
 				username.value.trim(),
 				dpd.value,
 				mtu.value,
-				password.value
+				password.value,
+				reconnectCooldown.value
 			].join('\n') + '\n';
 			return fs.write('/var/run/ikev2-manager-client.in', payload, 384 /* 0600 */);
 		}
@@ -508,7 +512,10 @@ return view.extend({
 								dpd,
 								common.fieldLabel(_('XFRM MTU'),
 									_('Keep 1400 unless PMTU diagnostics show a problem.')),
-								mtu
+								mtu,
+								common.fieldLabel(_('Reconnect cooldown'),
+									_('Minimum delay between automatic connection attempts, in seconds.')),
+								reconnectCooldown
 							])
 						]),
 						E('div', { 'class': 'ikev2-actions bar' }, [ connectResult.node, reconnect, saveOnly, save ])

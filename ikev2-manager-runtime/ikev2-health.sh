@@ -1,6 +1,8 @@
 #!/bin/sh
 
 status_file='/var/run/ikev2-health.status'
+volatile_set_dump='/var/run/pbr-ikev2-set4.dump'
+persistent_set_dump='/etc/ikev2-manager/pbr-set4.dump'
 
 has_proxy4() {
 	printf '%s' "$1" | grep -q 'name=proxy4[^{}]* state=INSTALLED'
@@ -19,7 +21,7 @@ domain_set_name() {
 dump_pbr_sets() {
 	set_name="$(domain_set_name)"
 	[ -n "$set_name" ] || return 0
-	dump="/var/run/pbr-ikev2-set4.dump"
+	dump="$volatile_set_dump"
 	nft list set inet fw4 "$set_name" 2>/dev/null |
 		sed -n '/elements = {/,/}/p' | tr -d '\n\t' |
 		sed 's/.*{//; s/}.*//' | tr ',' '\n' |
@@ -30,6 +32,20 @@ dump_pbr_sets() {
 		rm -f "${dump}.new"
 	fi
 }
+
+persist_pbr_sets() {
+	dump_pbr_sets
+	[ -s "$volatile_set_dump" ] || return 0
+	mkdir -p "${persistent_set_dump%/*}"
+	cp "$volatile_set_dump" "${persistent_set_dump}.new"
+	chmod 600 "${persistent_set_dump}.new"
+	mv "${persistent_set_dump}.new" "$persistent_set_dump"
+}
+
+# Persist once during an orderly reboot/service stop. Keeping the hot runtime
+# dump in /var/run avoids flash writes every 15 seconds, while the shutdown
+# snapshot lets warm client DNS caches survive the next boot without leaking.
+trap 'persist_pbr_sets; exit 0' INT TERM
 
 while true; do
 	if [ "$(uci -q get ikev2-manager.globals.configured)" != 1 ] &&
@@ -49,9 +65,15 @@ while true; do
 		printf 'state=client-disabled updated=%s\n' "$(date +%s)" >"$status_file"
 	fi
 
-	# strongSwan owns reconnection through start_action, close_action,
-	# dpd_action and retry_initiate_interval. The health watcher only observes
-	# and repairs derived state, avoiding concurrent initiations.
+	# strongSwan normally owns reconnects. Its boot-time start_action can run
+	# before WAN is usable, however, and that initial failure is not reliably
+	# retried. ensure-client is idempotent, locked and rate-limited, so the
+	# watcher safely fills that gap without racing manual actions or hotplug.
+	if [ "$client_enabled" = 1 ] && ! has_proxy4 "$raw"; then
+		/usr/libexec/ikev2-manager ensure-client >/dev/null 2>&1 || :
+		raw="$(swanctl --list-sas --raw 2>/dev/null || true)"
+	fi
+
 	if [ "$client_enabled" = 1 ] && has_proxy4 "$raw"; then
 		if /usr/libexec/ikev2-sync-vips &&
 			/usr/share/pbr/pbr.user.ikev2out; then
@@ -76,5 +98,5 @@ while true; do
 	fi
 
 	dump_pbr_sets
-	sleep 30
+	sleep 15
 done

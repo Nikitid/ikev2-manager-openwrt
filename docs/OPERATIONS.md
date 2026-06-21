@@ -34,11 +34,16 @@ The invariant can be tested without disconnecting traffic:
 /usr/libexec/ikev2-manager-system failclosed-check
 ```
 
-strongSwan owns reconnection through its CHILD_SA actions and retry interval.
-The health service observes state, synchronizes the virtual IP and repairs
-derived routing state without starting a competing IKE negotiation. If a rekey
-changes the assigned virtual IPv4, stale conntrack entries using the previous
-VIP are removed while ordinary WAN sessions are retained.
+strongSwan owns normal CHILD_SA recovery. WAN hotplug and the health service
+also recover a failed boot-time initiation without competing with a healthy
+SA. The minimum interval between automatic attempts is configurable under
+Outbound tunnel -> Connection -> Advanced connectivity (15-300 seconds,
+default 15). The health service also synchronizes the virtual IP and repairs
+derived routing state. If a rekey changes the assigned virtual IPv4, stale
+conntrack entries using the previous VIP are removed while ordinary WAN
+sessions are retained. The learned IPv4 domain set is kept in RAM during
+normal operation and written once on an orderly shutdown, then restored on the
+next boot for clients that retain a warm DNS cache.
 
 ## Common commands
 

@@ -9,5 +9,11 @@ case "$ACTION" in
 		/etc/init.d/ikev2-xfrm start
 		/usr/libexec/ikev2-sync-vips || true
 		/usr/share/pbr/pbr.user.ikev2out || true
+		# swanctl starts before WAN on many OpenWrt devices. Retry once the
+		# configured WAN is actually up; the helper is locked and idempotent.
+		(
+			sleep 20
+			/usr/libexec/ikev2-manager ensure-client
+		) </dev/null >>/tmp/ikev2-auto-connect.log 2>&1 &
 		;;
 esac
