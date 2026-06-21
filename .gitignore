@@ -18,7 +18,6 @@ credentials/
 .history/
 __pycache__/
 *.py[cod]
-.vscode/*.local.json
 .claude/
 backups/
 build/
