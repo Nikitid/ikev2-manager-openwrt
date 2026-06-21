@@ -306,13 +306,20 @@ var ru = {
 	'Previous policy remains active on failure': 'При ошибке остается предыдущая политика',
 	'Community services': 'Готовые сервисы',
 	'Domain routing engine': 'Механизм доменной маршрутизации',
-	'Reliable mode gives selected domains stable virtual addresses and sends only those connections through IKEv2. Legacy nftset remains active as a migration fallback for already-open connections.': 'Надёжный режим выдаёт выбранным доменам стабильные виртуальные адреса и направляет через IKEv2 только эти соединения. Старый nftset остаётся резервом для уже открытых подключений на время перехода.',
+	'Choose how destinations from the domain list are classified. This changes only selected services; other traffic continues to use the normal WAN route.': 'Выберите способ определения направлений из доменного списка. Режим влияет только на выбранные сервисы; остальной трафик продолжает идти через обычный WAN.',
 	'Reliable mode active': 'Надёжный режим активен',
 	'Legacy mode active': 'Обычный режим активен',
 	'Enable reliable mode': 'Включить надёжный режим',
 	'Use legacy mode': 'Вернуться к обычному режиму',
-	'Router DNS cache is disabled; the persistent FakeIP mapping survives service restarts and router reboots.': 'DNS-кэш роутера отключён; постоянная таблица FakeIP сохраняется при перезапуске службы и роутера.',
-	'Domains are currently classified from resolved public IP addresses and may leak through an existing WAN connection after an address change.': 'Сейчас домены определяются по полученным публичным IP-адресам; после смены адреса уже открытое соединение может остаться на WAN.',
+	'Selected domains receive stable FakeIP addresses. Only connections to those addresses from covered networks enter the IKEv2 path.': 'Выбранные домены получают стабильные FakeIP-адреса. В IKEv2 попадают только соединения к этим адресам из подключённых к политике сетей.',
+	'dnsmasq currently classifies domains by their public IP addresses. Existing connections may keep an earlier WAN route after an address changes.': 'Сейчас dnsmasq определяет домены по публичным IP-адресам. После смены адреса уже открытое соединение может сохранить прежний маршрут через WAN.',
+	'DNS classification': 'Определение по DNS',
+	'dnsmasq forwards public queries to sing-box. Listed domains receive persistent addresses from 198.18.0.0/15; other domains receive normal public addresses.': 'dnsmasq передаёт публичные запросы в sing-box. Домены из списка получают постоянные адреса из 198.18.0.0/15, остальные — обычные публичные адреса.',
+	'Selective interception': 'Выборочный перехват',
+	'nftables sends only FakeIP connections to TProxy. sing-box checks the original source network and applies the existing fail-closed IKEv2 routing mark.': 'nftables передаёт в TProxy только соединения к FakeIP. sing-box проверяет исходную сеть и применяет существующую IKEv2-метку с запретом обхода через WAN при недоступном туннеле.',
+	'Persistence and rollback': 'Сохранение и откат',
+	'FakeIP mappings survive service restarts. The previous DNS configuration is restored automatically if activation or validation fails.': 'Соответствия FakeIP сохраняются при перезапуске службы. Если включение или проверка завершается ошибкой, предыдущая конфигурация DNS восстанавливается автоматически.',
+	'The legacy PBR nftset policy remains enabled as a transition fallback for connections opened before reliable mode was activated.': 'Старая политика PBR/nftset остаётся переходным резервом для соединений, открытых до включения надёжного режима.',
 	'Unable to start routing-engine change': 'Не удалось запустить смену механизма маршрутизации',
 	'Manual domains': 'Ручные домены',
 	'Device routing': 'Маршрутизация устройств',
@@ -994,6 +1001,76 @@ function styles() {
 			.ikev2-section-head h3,
 			.ikev2-section-head h4 { margin: 0 0 .3rem; font-weight: 700; letter-spacing: -.01em; }
 			.ikev2-section-head p { margin: 0; color: var(--ikev2-muted); line-height: 1.5; }
+			.ikev2-engine {
+				display: grid;
+				gap: 1rem;
+			}
+			.ikev2-engine-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 1.25rem;
+				padding: 1rem 1.05rem;
+				border: 1px solid var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				background: var(--ikev2-surface);
+			}
+			.ikev2-engine-state {
+				display: grid;
+				justify-items: start;
+				gap: .65rem;
+				min-width: 0;
+			}
+			.ikev2-engine-summary {
+				margin: 0;
+				max-width: 48rem;
+				color: var(--ikev2-muted);
+				line-height: 1.5;
+			}
+			.ikev2-engine-action {
+				display: flex;
+				align-items: center;
+				justify-content: flex-end;
+				flex-wrap: wrap;
+				gap: .65rem;
+				flex: none;
+			}
+			.ikev2-engine-action .cbi-button {
+				min-width: 13.5rem;
+			}
+			.ikev2-engine-grid {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: .75rem;
+			}
+			.ikev2-engine-item {
+				display: grid;
+				align-content: start;
+				gap: .35rem;
+				min-width: 0;
+				padding: .9rem .95rem;
+				border: 1px solid var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				background: color-mix(in srgb, var(--ikev2-surface) 72%, transparent);
+			}
+			.ikev2-engine-item strong {
+				font-size: .84rem;
+				font-weight: 720;
+			}
+			.ikev2-engine-item span {
+				color: var(--ikev2-muted);
+				font-size: .8rem;
+				line-height: 1.5;
+			}
+			.ikev2-engine-foot {
+				padding: .75rem .9rem;
+				border-left: 3px solid color-mix(in srgb, var(--ikev2-info) 72%, transparent);
+				border-radius: 0 var(--ikev2-radius-sm) var(--ikev2-radius-sm) 0;
+				background: color-mix(in srgb, var(--ikev2-info) 8%, transparent);
+				color: var(--ikev2-muted);
+				font-size: .8rem;
+				line-height: 1.5;
+			}
 			.ikev2-actions {
 				display: flex;
 				align-items: center;
@@ -1749,6 +1826,7 @@ function styles() {
 					grid-template-columns: minmax(10rem, .8fr) minmax(16rem, 1.4fr);
 				}
 				.ikev2-user-actions { grid-column: 1 / -1; }
+				.ikev2-engine-grid { grid-template-columns: 1fr; }
 			}
 			@media (max-width: 600px) {
 				.ikev2-header, .ikev2-section-head { display: block; }
@@ -1765,6 +1843,9 @@ function styles() {
 				.ikev2-user-card { grid-template-columns: 1fr; }
 				.ikev2-user-actions { grid-column: auto; justify-content: flex-start; }
 				.ikev2-session { align-items: flex-start; flex-direction: column; }
+				.ikev2-engine-head { align-items: stretch; flex-direction: column; }
+				.ikev2-engine-action { justify-content: flex-start; }
+				.ikev2-engine-action .cbi-button { width: 100%; min-width: 0; }
 			}
 	` ]);
 }
