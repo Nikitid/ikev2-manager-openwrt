@@ -13,6 +13,10 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 - Added transactional DNS cutover, persistent FakeIP mappings, automatic
   rollback, boot restoration and safe refresh after domain or coverage changes.
 - Added a LuCI switch and runtime diagnostics for the domain-routing engine.
+- Fixed the LuCI engine card reading the wrong load result, which made an
+  active FakeIP backend appear as legacy mode after every page reload.
+- Reworked the engine card into a compact technical summary and update its
+  status and action immediately after a successful switch.
 - Added a low-frequency outbound data-plane probe so an installed but
   non-forwarding CHILD_SA is recovered after two consecutive failures.
 - Avoided false reconnect errors when IKE_AUTH completes just after the VICI

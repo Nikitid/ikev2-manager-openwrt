@@ -554,7 +554,7 @@ return view.extend({
 		var selectedLines = (data[1] || '').trim().split(/\s+/);
 		var status = (data[2] || '').trim();
 		var statusData = parseStatus(status);
-		var routerStatus = parseStatus(((data[9] || {}).stdout || ''));
+		var routerStatus = parseStatus(((data[8] || {}).stdout || ''));
 		var fakeipActive = routerStatus.engine === 'fakeip' &&
 			routerStatus.service === 'running' &&
 			routerStatus.nft === 'active' &&
@@ -580,11 +580,35 @@ return view.extend({
 		}
 
 		var engineResult = common.inlineResult();
+		var enginePill = common.pill(
+			fakeipActive ? _('Reliable mode active') : _('Legacy mode active'),
+			fakeipActive ? 'good' : 'warn');
+		var engineSummary = E('p', {
+			'class': 'ikev2-engine-summary'
+		}, [ fakeipActive ?
+			_('Selected domains receive stable FakeIP addresses. Only connections to those addresses from covered networks enter the IKEv2 path.') :
+			_('dnsmasq currently classifies domains by their public IP addresses. Existing connections may keep an earlier WAN route after an address changes.') ]);
 		var engineButton = E('button', {
 			'class': 'cbi-button ' + (fakeipActive ? 'cbi-button-reset' : 'cbi-button-apply')
 		}, [ fakeipActive ? _('Use legacy mode') : _('Enable reliable mode') ]);
+		function updateEngineState(active, message) {
+			fakeipActive = active;
+			common.setPill(enginePill,
+				active ? _('Reliable mode active') : _('Legacy mode active'),
+				active ? 'good' : 'warn');
+			engineSummary.textContent = active ?
+				_('Selected domains receive stable FakeIP addresses. Only connections to those addresses from covered networks enter the IKEv2 path.') :
+				_('dnsmasq currently classifies domains by their public IP addresses. Existing connections may keep an earlier WAN route after an address changes.');
+			engineButton.className = 'cbi-button ' +
+				(active ? 'cbi-button-reset' : 'cbi-button-apply');
+			engineButton.textContent = active ?
+				_('Use legacy mode') : _('Enable reliable mode');
+			if (message)
+				engineResult.ok(message);
+		}
 		engineButton.addEventListener('click', function() {
 			var command = fakeipActive ? 'deactivate-async' : 'activate-async';
+			var targetActive = !fakeipActive;
 			return common.runAction({
 				button: engineButton,
 				result: engineResult,
@@ -601,8 +625,7 @@ return view.extend({
 							throw new Error(_('The operation continues in the background.'));
 						if (st.state === 'error')
 							throw new Error(st.message || _('Operation failed'));
-						engineResult.ok(st.message || _('Saved.'));
-						window.setTimeout(function() { window.location.reload(); }, 700);
+						updateEngineState(targetActive, st.message || _('Saved.'));
 					});
 				}
 			});
@@ -610,23 +633,40 @@ return view.extend({
 
 		var domainsContent = E('div', {}, [
 			common.section(_('Domain routing engine'),
-				_('Reliable mode gives selected domains stable virtual addresses and sends only those connections through IKEv2. Legacy nftset remains active as a migration fallback for already-open connections.'),
-				E('div', {}, [
-					E('div', { 'class': 'ikev2-section-head' }, [
-						E('div', {}, [
-							common.pill(fakeipActive ? _('Reliable mode active') : _('Legacy mode active'),
-								fakeipActive ? 'good' : 'warn'),
-							E('p', {
-								'class': 'cbi-section-descr',
-								'style': 'margin:.7rem 0 0'
-							}, [ fakeipActive ?
-								_('Router DNS cache is disabled; the persistent FakeIP mapping survives service restarts and router reboots.') :
-								_('Domains are currently classified from resolved public IP addresses and may leak through an existing WAN connection after an address change.') ])
+				_('Choose how destinations from the domain list are classified. This changes only selected services; other traffic continues to use the normal WAN route.'),
+				E('div', { 'class': 'ikev2-engine' }, [
+					E('div', { 'class': 'ikev2-engine-head' }, [
+						E('div', { 'class': 'ikev2-engine-state' }, [
+							enginePill,
+							engineSummary
 						]),
-						E('div', { 'class': 'ikev2-actions end' }, [
+						E('div', { 'class': 'ikev2-engine-action' }, [
 							engineResult.node,
 							engineButton
 						])
+					]),
+					E('div', { 'class': 'ikev2-engine-grid' }, [
+						E('div', { 'class': 'ikev2-engine-item' }, [
+							E('strong', {}, [ _('DNS classification') ]),
+							E('span', {}, [
+								_('dnsmasq forwards public queries to sing-box. Listed domains receive persistent addresses from 198.18.0.0/15; other domains receive normal public addresses.')
+							])
+						]),
+						E('div', { 'class': 'ikev2-engine-item' }, [
+							E('strong', {}, [ _('Selective interception') ]),
+							E('span', {}, [
+								_('nftables sends only FakeIP connections to TProxy. sing-box checks the original source network and applies the existing fail-closed IKEv2 routing mark.')
+							])
+						]),
+						E('div', { 'class': 'ikev2-engine-item' }, [
+							E('strong', {}, [ _('Persistence and rollback') ]),
+							E('span', {}, [
+								_('FakeIP mappings survive service restarts. The previous DNS configuration is restored automatically if activation or validation fails.')
+							])
+						])
+					]),
+					E('div', { 'class': 'ikev2-engine-foot' }, [
+						_('The legacy PBR nftset policy remains enabled as a transition fallback for connections opened before reliable mode was activated.')
 					])
 				])),
 			common.section(_('Community services'),
