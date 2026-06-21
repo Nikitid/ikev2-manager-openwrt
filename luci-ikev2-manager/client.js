@@ -521,7 +521,7 @@ return view.extend({
 						E('div', { 'class': 'ikev2-actions bar' }, [ connectResult.node, reconnect, saveOnly, save ])
 					])),
 				common.section(_('DNS upstream'),
-					_('Choose how the router resolves public DNS names. dnsmasq-full remains the local resolver and continues populating PBR nftsets.'),
+					_('Choose the public DNS upstream. In reliable mode dnsmasq sends public queries through sing-box, which uses dnsproxy as its upstream; in legacy mode dnsmasq uses dnsproxy directly.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-note', 'style': 'margin-bottom:1rem' }, [
 							_('Current upstream: %s').format(dnsCurrent),

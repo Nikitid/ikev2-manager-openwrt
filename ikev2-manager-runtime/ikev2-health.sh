@@ -5,7 +5,7 @@ volatile_set_dump='/var/run/pbr-ikev2-set4.dump'
 persistent_set_dump='/etc/ikev2-manager/pbr-set4.dump'
 probe_state='/var/run/ikev2-health-probe.state'
 recovery_stamp='/var/run/ikev2-health-recovery.last'
-probe_interval=60
+probe_interval=20
 probe_fail_limit=2
 
 has_proxy4() {
@@ -16,7 +16,11 @@ tunnel_probe() {
 	curl -4fsS --interface ipsec-out \
 		--connect-timeout 4 --max-time 8 \
 		https://1.1.1.1/cdn-cgi/trace 2>/dev/null |
-		grep -q '^ip=[0-9]'
+		grep -q '^ip=[0-9]' && return 0
+	curl -4fsS --interface ipsec-out \
+		--connect-timeout 4 --max-time 8 \
+		https://checkip.amazonaws.com 2>/dev/null |
+		grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
 }
 
 probe_due() {
@@ -92,6 +96,11 @@ persist_pbr_sets() {
 trap 'persist_pbr_sets; exit 0' INT TERM
 
 while true; do
+	if [ "$(uci -q get ikev2-manager.domains.engine)" = fakeip ] &&
+	   [ -x /usr/libexec/ikev2-domain-router ]; then
+		/usr/libexec/ikev2-domain-router ensure >/dev/null 2>&1 || :
+	fi
+
 	if [ "$(uci -q get ikev2-manager.globals.configured)" != 1 ] &&
 		! ip link show ipsec-out >/dev/null 2>&1; then
 		printf 'state=disabled updated=%s\n' "$(date +%s)" >"$status_file"

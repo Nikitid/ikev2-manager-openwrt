@@ -367,7 +367,7 @@ return view.extend({
 					return common.execChecked(devicesHelper, args, _('Operation failed'))
 						.then(function() {
 							ui.addNotification(null, E('p', {}, [
-								_('Saved. PBR is restarting in the background (~15s).')
+								_('Saved. Domain routing is updating in the background.')
 							]), 'info');
 							return fs.exec(devicesHelper, [ 'dump' ]);
 						}).then(function(r) {

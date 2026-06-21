@@ -94,7 +94,7 @@ PY
 	printf 'Package: %s\n' "$PKG_NAME"
 	printf 'Version: %s-r%s\n' "$PKG_VERSION" "$PKG_RELEASE"
 	cat <<'EOF'
-Depends: luci-base, rpcd-mod-file, jsonfilter, sing-box, kmod-nft-tproxy, kmod-nf-tproxy
+Depends: luci-base, rpcd-mod-file, jsonfilter
 Section: luci
 Architecture: all
 Maintainer: nikitid

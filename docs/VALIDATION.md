@@ -37,8 +37,17 @@ recorded without private router data.
   address;
 - PBR restart refreshed the sing-box rule-set without changing FakeIP mappings;
 - managed DNS re-apply kept dnsmasq on the FakeIP resolver;
+- health restored a deliberately deleted TProxy table in 14 seconds and
+  repaired a missing policy rule plus dnsmasq upstream drift;
+- a temporary direct-WAN device exclusion appeared before the covered-LAN
+  FakeIP rule and was removed cleanly afterward;
+- 12 consecutive TikTok HTTPS requests completed through FakeIP; sing-box used
+  about 37 MiB RSS and retained the same FakeIP after a forced process respawn;
 - a stale installed CHILD_SA was detected during testing, reconnected without a
   router reboot, and the new data-plane probe reported zero failures;
+- an explicit outbound-SA termination blocked selected traffic instead of
+  leaking it to WAN, kept ordinary WAN traffic online and recovered the tunnel
+  in 5 seconds;
 - router reboot validation remains intentionally pending.
 
 ## 1.0.0-r5 evidence

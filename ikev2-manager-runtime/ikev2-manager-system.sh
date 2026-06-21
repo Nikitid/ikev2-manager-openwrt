@@ -1360,6 +1360,10 @@ apply_server_runtime() {
 }
 
 show_config() {
+	domain_status=''
+	if [ -x /usr/libexec/ikev2-domain-router ]; then
+		domain_status="$(/usr/libexec/ikev2-domain-router status 2>/dev/null || true)"
+	fi
 	printf 'configured=%s\n' "$(getv globals configured)"
 	printf 'wan_interface=%s\n' "$(getv globals wan_interface)"
 	printf 'wan_zone=%s\n' "$(getv globals wan_zone)"
@@ -1369,6 +1373,10 @@ show_config() {
 	printf 'block_dot=%s\n' "$(getv globals block_dot)"
 	printf 'source_include_vpn=%s\n' "$(defaultv globals source_include_vpn 1)"
 	printf 'server_enabled=%s\n' "$(getv server enabled)"
+	printf 'domain_engine=%s\n' "$(getv domains engine)"
+	printf 'domain_healthy=%s\n' "$(
+		printf '%s\n' "$domain_status" | sed -n 's/^healthy=//p' | tail -n1
+	)"
 	case "$(ip -6 route show default 2>/dev/null | head -1)" in
 		*unreachable*) printf 'ipv6_failfast=active\n' ;;
 		'') printf 'ipv6_failfast=off\n' ;;
