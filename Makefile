@@ -22,10 +22,7 @@ define Package/luci-app-ikev2-manager
   DEPENDS:= \
 	+luci-base \
 	+rpcd-mod-file \
-	+jsonfilter \
-	+sing-box \
-	+kmod-nft-tproxy \
-	+kmod-nf-tproxy
+	+jsonfilter
 endef
 
 define Package/luci-app-ikev2-manager/description

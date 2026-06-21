@@ -129,6 +129,8 @@ function checkRows(doctor) {
 		firewall4: _('firewall4'),
 		dnsmasq_nftset: _('dnsmasq nftset support'),
 		dnsproxy: _('Encrypted DNS proxy'),
+		sing_box: _('sing-box domain router'),
+		nft_tproxy: _('nftables TProxy support'),
 		pbr_service: _('PBR service'),
 		pbr_version: _('PBR version'),
 		failclosed_route: _('Fail-closed route'),
@@ -175,7 +177,7 @@ function rowPairs(rows) {
 }
 
 function dependencyGroups(rows) {
-	var preferred = [ 'openwrt', 'pbr_service', 'swanctl', 'xfrm_module' ];
+	var preferred = [ 'openwrt', 'pbr_service', 'swanctl', 'sing_box' ];
 	var summary = [];
 
 	rows.filter(function(row) { return row.tone !== 'good'; }).forEach(function(row) {
@@ -213,7 +215,7 @@ return view.extend({
 	},
 
 	// Add/remove a device override and refresh only this table. The helper
-	// persists the rule before returning; PBR may finish restarting in the
+	// persists the rule before returning; routing services may finish updating in the
 	// background without forcing a page reload or losing the user's scroll.
 	deviceAction: function(args, busyBtn, onSaved) {
 		return common.runAction({
@@ -226,7 +228,7 @@ return view.extend({
 					if (onSaved)
 						onSaved(response.stdout || '');
 					ui.addNotification(null, E('p', {}, [
-						_('Saved. PBR is restarting in the background (~15s).') ]), 'info');
+						_('Saved. Domain routing is updating in the background.') ]), 'info');
 				});
 			},
 			onError: function(message) {
@@ -325,6 +327,12 @@ return view.extend({
 			_('Install runtime dependencies') ]);
 		var removeDeps = E('button', { 'class': 'cbi-button cbi-button-remove' }, [
 			_('Remove runtime dependencies') ]);
+		var reliable = value.domain_engine === 'fakeip';
+		var domainHealthy = reliable && value.domain_healthy === 'yes';
+		var domainTone = reliable ? (domainHealthy ? 'good' : 'bad') : 'neutral';
+		var domainLabel = reliable ?
+			(domainHealthy ? _('Reliable mode active') : _('Reliable mode needs attention')) :
+			_('Legacy mode active');
 
 		// ── Network selectors ────────────────────────────────────────────
 		var protectedSet = {};
@@ -399,7 +407,7 @@ return view.extend({
 		});
 
 		removeDeps.addEventListener('click', function() {
-			if (!window.confirm(_('Remove the strongSwan, PBR and XFRM packages this app installed? The VPN stops and managed configuration is cleared. Generic tools and ACME are kept.')))
+			if (!window.confirm(_('Remove strongSwan, PBR, sing-box and XFRM/TProxy packages? The VPN and reliable domain routing stop, and managed configuration is cleared. Generic tools and ACME are kept.')))
 				return;
 			runDepsJob(removeDeps, 'remove-deps', _('Runtime dependencies removed.'));
 		});
@@ -431,10 +439,21 @@ return view.extend({
 					E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:.9rem' }, [
 						applyResult.node,
 						save
+					]),
+					E('div', { 'class': 'ikev2-health-row', 'style': 'margin-top:1rem' }, [
+						E('span', { 'class': 'ikev2-health-copy' }, [
+							E('strong', {}, [ _('Domain routing engine') ]),
+							E('span', { 'class': 'ikev2-toggle-sub' }, [
+								reliable ?
+									_('sing-box FakeIP and nftables TProxy classify selected services. Configure the engine on the Policy Routing page.') :
+									_('PBR currently classifies selected services by their resolved public IP addresses. Configure the engine on the Policy Routing page.')
+							])
+						]),
+						common.pill(domainLabel, domainTone)
 					])
 				]),
 				common.section(_('Runtime dependencies'),
-					_('This installs PBR, strongSwan, dnsmasq-full, dnsproxy and XFRM packages. VPN and routing stay disabled until managed mode is enabled.'),
+					_('This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. VPN and routing stay disabled until managed mode is enabled.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-deps-summary' }, [
 							E('h4', {}, [ _('Key checks') ]),

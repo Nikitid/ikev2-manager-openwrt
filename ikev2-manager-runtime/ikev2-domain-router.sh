@@ -489,6 +489,18 @@ validate_dns_server() {
 		die "Control domain did not receive a real address: $control -> ${control_ip:-none}"
 }
 
+runtime_healthy() {
+	[ "$(defaultv domains engine nftset)" = fakeip ] || return 1
+	/etc/init.d/ikev2-domain-router running >/dev/null 2>&1 || return 1
+	[ "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)" = "$dns_address" ] ||
+		return 1
+	[ "$(uci -q get dhcp.@dnsmasq[0].cachesize 2>/dev/null || true)" = 0 ] ||
+		return 1
+	nft list table inet "$nft_table" >/dev/null 2>&1 || return 1
+	ip -4 rule show |
+		grep -q "fwmark $tproxy_mark/$tproxy_mask.*lookup $tproxy_table" || return 1
+}
+
 wait_for_query() {
 	server="$1"
 	domain="$2"
@@ -499,6 +511,37 @@ wait_for_query() {
 		sleep 1
 	done
 	return 1
+}
+
+repair_runtime() {
+	[ "$(defaultv domains engine nftset)" = fakeip ] || return 0
+	if ! /etc/init.d/ikev2-domain-router running >/dev/null 2>&1; then
+		/etc/init.d/ikev2-domain-router restart
+		wait_for_dns
+		validate_dns_server "$dns_address"
+	fi
+	if ! nft list table inet "$nft_table" >/dev/null 2>&1 ||
+	   ! ip -4 rule show |
+		grep -q "fwmark $tproxy_mark/$tproxy_mask.*lookup $tproxy_table"; then
+		nft_start
+	fi
+	if [ "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)" != "$dns_address" ] ||
+	   [ "$(uci -q get dhcp.@dnsmasq[0].cachesize 2>/dev/null || true)" != 0 ]; then
+		validate_dns_server "$dns_address"
+		use_fakeip_dns
+		wait_for_query 127.0.0.1 openwrt.org
+		validate_dns_server 127.0.0.1
+	fi
+	runtime_healthy || return 1
+	write_status active 'FakeIP runtime repaired'
+}
+
+ensure_runtime() {
+	init_config
+	[ "$(defaultv domains engine nftset)" = fakeip ] || return 0
+	runtime_healthy && return 0
+	[ ! -d "$lock_dir" ] || return 0
+	with_lock repair_runtime
 }
 
 prepare() {
@@ -647,6 +690,7 @@ status() {
 	printf 'nft=%s\n' "$(nft list table inet "$nft_table" >/dev/null 2>&1 && echo active || echo missing)"
 	printf 'rule=%s\n' "$(ip -4 rule show | grep -q "fwmark $tproxy_mark/$tproxy_mask.*lookup $tproxy_table" &&
 		echo active || echo missing)"
+	printf 'healthy=%s\n' "$(runtime_healthy && echo yes || echo no)"
 	cat "$state_file" 2>/dev/null || true
 }
 
@@ -663,10 +707,11 @@ case "${1:-}" in
 	deactivate-async) schedule deactivate ;;
 	refresh-async) schedule refresh ;;
 	_run) run_async "${2:-}" "${3:-}" ;;
+	ensure) ensure_runtime >>"$log_file" 2>&1 ;;
 	nft-start) nft_start ;;
 	nft-stop) nft_stop ;;
 	status) status ;;
 	*)
-		die 'Usage: ikev2-domain-router {render|check|prepare|refresh|adopt-upstream|activate|deactivate|fallback|activate-async|deactivate-async|refresh-async|nft-start|nft-stop|status}'
+		die 'Usage: ikev2-domain-router {render|check|prepare|refresh|adopt-upstream|activate|deactivate|fallback|activate-async|deactivate-async|refresh-async|ensure|nft-start|nft-stop|status}'
 		;;
 esac

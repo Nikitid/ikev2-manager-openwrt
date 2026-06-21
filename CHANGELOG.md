@@ -17,8 +17,18 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
   active FakeIP backend appear as legacy mode after every page reload.
 - Reworked the engine card into a compact technical summary and update its
   status and action immediately after a successful switch.
+- Added lightweight FakeIP invariant checks to the health loop. A missing
+  sing-box service, nftables TProxy table, policy rule or dnsmasq hand-off is
+  repaired without restarting PBR, WAN or the router.
+- Updated Overview, dependency diagnostics, DNS upstream help and device-rule
+  notifications to reflect the reliable routing engine.
+- Kept sing-box and TProxy in the confirmed runtime dependency workflow instead
+  of making the passive LuCI bootstrap package install kernel modules eagerly.
 - Added a low-frequency outbound data-plane probe so an installed but
   non-forwarding CHILD_SA is recovered after two consecutive failures.
+- Tightened the probe interval to 20 seconds and added a second independent
+  endpoint, reducing stale-SA recovery time without reacting to one provider
+  timeout.
 - Avoided false reconnect errors when IKE_AUTH completes just after the VICI
   initiation timeout.
 
