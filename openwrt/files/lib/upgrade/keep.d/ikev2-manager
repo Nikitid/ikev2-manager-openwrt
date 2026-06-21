@@ -4,7 +4,9 @@
 /etc/ikev2-manager/outbound.custom.conf
 /etc/pbr-ikev2-domains.txt
 /etc/pbr-ikev2-domains.manual.txt
+/etc/pbr-ikev2-addresses.manual.txt
 /etc/pbr-ikev2-community-selected.txt
+/etc/pbr-ikev2-service-cidrs.txt
 /etc/pbr-ikev2-community-cache/
 /etc/ikev2-manager/domain-router-cache.db
 /etc/swanctl/private/ikev2.key

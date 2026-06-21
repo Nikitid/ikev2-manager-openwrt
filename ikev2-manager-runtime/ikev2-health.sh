@@ -90,6 +90,19 @@ persist_pbr_sets() {
 	mv "${persistent_set_dump}.new" "$persistent_set_dump"
 }
 
+service_cidr_policy_healthy() {
+	[ -s /etc/pbr-ikev2-service-cidrs.txt ] || return 0
+	[ "$(uci -q get pbr.ikev2pbr_service_cidrs.enabled)" = 1 ] || return 1
+	nft list chain inet fw4 pbr_prerouting 2>/dev/null |
+		grep -q 'comment "IKEv2 PBR service networks"'
+}
+
+ensure_service_cidr_policy() {
+	service_cidr_policy_healthy && return 0
+	[ ! -d /var/run/ikev2-action.lock ] || return 0
+	/usr/libexec/ikev2-domains-restart >/dev/null 2>&1 || :
+}
+
 # Persist once during an orderly reboot/service stop. Keeping the hot runtime
 # dump in /var/run avoids flash writes every 15 seconds, while the shutdown
 # snapshot lets warm client DNS caches survive the next boot without leaking.
@@ -100,6 +113,7 @@ while true; do
 	   [ -x /usr/libexec/ikev2-domain-router ]; then
 		/usr/libexec/ikev2-domain-router ensure >/dev/null 2>&1 || :
 	fi
+	ensure_service_cidr_policy
 
 	if [ "$(uci -q get ikev2-manager.globals.configured)" != 1 ] &&
 		! ip link show ipsec-out >/dev/null 2>&1; then

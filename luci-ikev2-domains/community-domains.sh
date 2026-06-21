@@ -3,8 +3,10 @@
 set -u
 
 manual_file="${IKEV2_MANUAL_FILE:-/etc/pbr-ikev2-domains.manual.txt}"
+manual_cidr_file="${IKEV2_MANUAL_CIDR_FILE:-/etc/pbr-ikev2-addresses.manual.txt}"
 selected_file="${IKEV2_SELECTED_FILE:-/etc/pbr-ikev2-community-selected.txt}"
 final_file="${IKEV2_FINAL_FILE:-/etc/pbr-ikev2-domains.txt}"
+cidr_file="${IKEV2_CIDR_FILE:-/etc/pbr-ikev2-service-cidrs.txt}"
 catalog_file="${IKEV2_CATALOG_FILE:-/usr/share/ikev2-domains/community-services}"
 cache_dir="${IKEV2_CACHE_DIR:-/etc/pbr-ikev2-community-cache}"
 status_file="${IKEV2_STATUS_FILE:-/tmp/ikev2-domains-community.status}"
@@ -51,6 +53,36 @@ normalize_services() {
 			print line
 		}
 	' "$1" | sort -u
+}
+
+normalize_cidrs() {
+	awk '
+		{
+			gsub(/\r/, "")
+			gsub(/^[ \t]+|[ \t]+$/, "")
+			if ($0 == "" || substr($0, 1, 1) == "#")
+				next
+			if ($0 !~ /^[0-9.]+(\/[0-9]+)?$/) {
+				printf "invalid IPv4 CIDR: %s\n", $0 > "/dev/stderr"
+				exit 1
+			}
+			split($0, cidr, "/")
+			prefix = (cidr[2] == "" ? 32 : cidr[2])
+			if (prefix < 0 || prefix > 32 ||
+			    split(cidr[1], octets, ".") != 4) {
+				printf "invalid IPv4 CIDR: %s\n", $0 > "/dev/stderr"
+				exit 1
+			}
+			for (i = 1; i <= 4; i++) {
+				if (octets[i] !~ /^[0-9]+$/ ||
+				    octets[i] < 0 || octets[i] > 255) {
+					printf "invalid IPv4 CIDR: %s\n", $0 > "/dev/stderr"
+					exit 1
+				}
+			}
+			printf "%s/%d\n", cidr[1], prefix
+		}
+	' "$1"
 }
 
 refresh_catalog() {
@@ -131,7 +163,7 @@ download_service() {
 
 apply_once() {
 	local work selected normalized_manual service failed stale
-	local selected_count domain_count pids pid action_id
+	local selected_count domain_count cidr_count custom_cidr_count pids pid action_id
 	action_id="${1:-}"
 
 	work="$(mktemp -d)"
@@ -141,6 +173,7 @@ apply_once() {
 	pids=''
 
 	[ -f "$manual_file" ] || cp "$final_file" "$manual_file"
+	[ -f "$manual_cidr_file" ] || : >"$manual_cidr_file"
 	[ -f "$selected_file" ] || : > "$selected_file"
 
 	if ! normalize_domains "$manual_file" | sort -u > "$normalized_manual"; then
@@ -175,8 +208,23 @@ apply_once() {
 		done
 	} | sort -u > "$work/final"
 
+	if ! normalize_cidrs "$manual_cidr_file" >"$work/manual.cidrs"; then
+		rm -rf "$work"
+		return 1
+	fi
+	cp "$work/manual.cidrs" "$work/cidrs.unsorted"
+	for service in $(cat "$selected"); do
+		[ -s "$local_services_dir/$service.cidrs" ] || continue
+		if ! normalize_cidrs "$local_services_dir/$service.cidrs" \
+			>>"$work/cidrs.unsorted"; then
+			rm -rf "$work"
+			return 1
+		fi
+	done
+	sort -u "$work/cidrs.unsorted" 2>/dev/null >"$work/cidrs"
+
 	# An empty result is only legitimate when the user intentionally cleared
-	# everything (no manual domains AND no community services selected). If
+	# everything (no custom domains AND no community services selected). If
 	# services were selected we must have content here — an empty list then
 	# means a download glitch, so we keep the previous list instead.
 	if [ ! -s "$work/final" ] && [ -s "$selected" ]; then
@@ -188,9 +236,14 @@ apply_once() {
 	cp "$work/final" "$final_file.tmp"
 	chmod 600 "$final_file.tmp"
 	mv "$final_file.tmp" "$final_file"
+	cp "$work/cidrs" "$cidr_file.tmp"
+	chmod 600 "$cidr_file.tmp"
+	mv "$cidr_file.tmp" "$cidr_file"
 
 	selected_count="$(wc -l < "$selected" | tr -d ' ')"
 	domain_count="$(wc -l < "$work/final" | tr -d ' ')"
+	cidr_count="$(wc -l < "$work/cidrs" | tr -d ' ')"
+	custom_cidr_count="$(wc -l < "$work/manual.cidrs" | tr -d ' ')"
 	stale="$(cat "$work"/*.stale 2>/dev/null | sort -u | tr '\n' ' ')"
 
 	{
@@ -199,6 +252,9 @@ apply_once() {
 		echo "updated=$(date '+%Y-%m-%d %H:%M:%S %z')"
 		echo "services=$selected_count"
 		echo "domains=$domain_count"
+		echo "cidrs=$cidr_count"
+		echo "custom_cidrs=$custom_cidr_count"
+		echo "selected=$(tr '\n' ',' <"$selected" | sed 's/,$//')"
 		[ -z "$stale" ] || echo "cached_services=$stale"
 	} > "$status_file"
 
@@ -237,6 +293,12 @@ case "${1:-}" in
 				| sed 's|.*/||;s/\.lst$//'
 		} | sort -u
 		;;
+	ip-services)
+		for source in "$local_services_dir"/*.cidrs; do
+			[ -s "$source" ] || continue
+			printf '%s\n' "${source##*/}" | sed 's/\.cidrs$//'
+		done | sort -u
+		;;
 	schedule)
 		action_id="$(date +%s)-$$"
 		printf '%s\n' "$action_id" > "$pending_file"
@@ -259,7 +321,7 @@ case "${1:-}" in
 		apply_once
 		;;
 	*)
-		echo "usage: $0 {catalog|schedule|apply}" >&2
+		echo "usage: $0 {catalog|ip-services|schedule|apply}" >&2
 		exit 2
 		;;
 esac

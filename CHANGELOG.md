@@ -5,6 +5,8 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+## 1.0.0-r6 - 2026-06-21
+
 - Added an experimental reliable domain-routing engine based on sing-box
   FakeIP and nftables TProxy. Selected domains keep stable virtual addresses,
   while only covered LAN and inbound-IKEv2 sources use the outbound tunnel.
@@ -31,6 +33,15 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
   timeout.
 - Avoided false reconnect errors when IKE_AUTH completes just after the VICI
   initiation timeout.
+- Added generic per-service IPv4 network targets for applications that bypass
+  DNS, with Telegram MTProto data-centre ranges as the first bundled set.
+- Fixed LuCI service-chip persistence and exposed the active direct-network
+  count alongside domain and service totals.
+- Derived direct-IP service metadata from packaged CIDR files, added health
+  repair for a missing PBR service-network rule and covered the combined
+  domain/CIDR transaction with a standalone regression test.
+- Added separate custom IPv4 address and CIDR entries alongside custom domains;
+  both remain independent from downloaded service updates.
 
 ## 1.0.0-r5 - 2026-06-21
 

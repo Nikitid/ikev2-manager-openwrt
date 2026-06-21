@@ -33,6 +33,7 @@ install_file 755 ikev2-manager-runtime/90-ikev2-acme /etc/hotplug.d/acme/90-ikev
 install_file 600 ikev2-manager-runtime/20-router-xfrm.conf /etc/strongswan.d/charon/20-ikev2-pbr.conf
 install_file 644 openwrt/files/etc/ikev2-manager/README /etc/ikev2-manager/README
 install_file 600 openwrt/files/etc/pbr-ikev2-domains.manual.txt /etc/pbr-ikev2-domains.manual.txt
+install_file 600 openwrt/files/etc/pbr-ikev2-addresses.manual.txt /etc/pbr-ikev2-addresses.manual.txt
 install_file 644 openwrt/files/lib/upgrade/keep.d/ikev2-manager /lib/upgrade/keep.d/ikev2-manager
 
 install_file 755 luci-ikev2-manager/ikev2-manager.sh /usr/libexec/ikev2-manager
@@ -55,6 +56,9 @@ install_file 644 NOTICE /usr/share/licenses/luci-app-ikev2-manager/NOTICE
 
 install_file 644 luci-ikev2-domains/community-services.txt /usr/share/ikev2-domains/community-services
 for source in "$root"/luci-ikev2-domains/local-services/*.lst; do
+	install_file 644 "${source#"$root/"}" "/usr/share/ikev2-domains/local-services/${source##*/}"
+done
+for source in "$root"/luci-ikev2-domains/local-services/*.cidrs; do
 	install_file 644 "${source#"$root/"}" "/usr/share/ikev2-domains/local-services/${source##*/}"
 done
 
@@ -114,6 +118,7 @@ cat >"$stage/CONTROL/conffiles" <<'EOF'
 /etc/config/ikev2-manager
 /etc/pbr-ikev2-domains.txt
 /etc/pbr-ikev2-domains.manual.txt
+/etc/pbr-ikev2-addresses.manual.txt
 /etc/pbr-ikev2-community-selected.txt
 EOF
 

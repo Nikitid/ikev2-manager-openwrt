@@ -1,0 +1,10 @@
+# Telegram MTProto data-centre IPv4 networks.
+# These are routing facts maintained locally; the community domain source does
+# not cover app connections that go directly to a data-centre address.
+91.108.4.0/22
+91.108.8.0/22
+91.108.12.0/22
+91.108.16.0/22
+91.108.20.0/22
+91.108.56.0/22
+149.154.160.0/20

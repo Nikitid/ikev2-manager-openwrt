@@ -36,6 +36,7 @@ if opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed';
 		/etc/config/ikev2-manager \
 		/etc/pbr-ikev2-domains.txt \
 		/etc/pbr-ikev2-domains.manual.txt \
+		/etc/pbr-ikev2-addresses.manual.txt \
 		/etc/pbr-ikev2-community-selected.txt; do
 		[ -e "$file" ] || continue
 		mkdir -p "$migration_dir${file%/*}"
@@ -59,6 +60,7 @@ if [ "$legacy" = 1 ]; then
 		/etc/config/ikev2-manager \
 		/etc/pbr-ikev2-domains.txt \
 		/etc/pbr-ikev2-domains.manual.txt \
+		/etc/pbr-ikev2-addresses.manual.txt \
 		/etc/pbr-ikev2-community-selected.txt; do
 		[ -e "$migration_dir$file" ] || continue
 		cp -p "$migration_dir$file" "$file"

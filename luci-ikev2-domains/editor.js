@@ -6,12 +6,14 @@
 
 var domainFile    = '/etc/pbr-ikev2-domains.txt';
 var manualFile    = '/etc/pbr-ikev2-domains.manual.txt';
+var manualAddressFile = '/etc/pbr-ikev2-addresses.manual.txt';
 var selectedFile  = '/etc/pbr-ikev2-community-selected.txt';
 var statusFile    = '/tmp/ikev2-domains-community.status';
 var communityHelper = '/usr/libexec/ikev2-domains-community';
 var devicesHelper   = '/usr/libexec/ikev2-devices';
 var systemHelper    = '/usr/libexec/ikev2-manager-system';
 var domainRouterHelper = '/usr/libexec/ikev2-domain-router';
+var serviceSelection = {};
 
 function normalizeDomains(value) {
 	var lines = (value || '').replace(/\r/g, '').split('\n');
@@ -40,6 +42,39 @@ function normalizeDomains(value) {
 	}
 
 	return domains;
+}
+
+function normalizeAddresses(value) {
+	var lines = (value || '').replace(/\r/g, '').split('\n');
+	var addresses = [];
+	var seen = {};
+
+	for (var i = 0; i < lines.length; i++) {
+		var entry = lines[i].trim();
+		if (!entry || entry.charAt(0) === '#')
+			continue;
+
+		var parts = entry.split('/');
+		if (parts.length > 2 || (parts.length === 2 &&
+		    (!/^\d+$/.test(parts[1]) || +parts[1] > 32)))
+			throw new Error(
+				_('Invalid IPv4 address or network on line %d: %s').format(i + 1, entry));
+
+		var octets = parts[0].split('.');
+		if (octets.length !== 4 || octets.some(function(octet) {
+			return !/^\d+$/.test(octet) || +octet > 255;
+		}))
+			throw new Error(
+				_('Invalid IPv4 address or network on line %d: %s').format(i + 1, entry));
+
+		var normalized = parts[0] + '/' + (parts.length === 2 ? +parts[1] : 32);
+		if (!seen[normalized]) {
+			seen[normalized] = true;
+			addresses.push(normalized);
+		}
+	}
+
+	return addresses;
 }
 
 function serviceLabel(name) {
@@ -78,11 +113,10 @@ var SERVICE_CATEGORIES = [
 ];
 
 var BROAD_SERVICES = /^(cloudflare|cloudfront|digitalocean|hetzner|ovh)$/;
-var LOCAL_SERVICES = /^(openai|anthropic_ai|midjourney|perplexity|mistral|huggingface|stability_ai|x_ai|linkedin|spotify|tiktok)$/;
-
 // Compact selectable chip (replaces the bulky per-service checkbox card).
-function serviceChip(name, selected) {
+function serviceChip(name, selected, ipServices) {
 	var broad = BROAD_SERVICES.test(name);
+	var ipNetworks = !!ipServices[name];
 	var input = E('input', {
 		'type': 'checkbox',
 		'class': 'ikev2-community-service',
@@ -97,17 +131,25 @@ function serviceChip(name, selected) {
 		broad ? E('span', {
 			'class': 'ikev2-chip-mark',
 			'title': _('Broad — may also route unrelated sites')
-		}, [ '⚠' ]) : ''
+		}, [ '⚠' ]) : '',
+		ipNetworks ? E('span', {
+			'class': 'ikev2-chip-mark',
+			'title': _('Includes direct service IP networks')
+		}, [ 'IP' ]) : ''
 	]);
 	input.addEventListener('change', function() {
 		chip.classList.toggle('selected', input.checked);
+		if (input.checked)
+			serviceSelection[name] = true;
+		else
+			delete serviceSelection[name];
 	});
 	return chip;
 }
 
 // Group a flat catalog list into ordered category blocks. Unmatched names
 // collect into a trailing "Other" group.
-function renderServiceGroups(services, selected) {
+function renderServiceGroups(services, selected, ipServices) {
 	var available = {};
 	services.forEach(function(n) { available[n] = true; });
 
@@ -116,7 +158,10 @@ function renderServiceGroups(services, selected) {
 
 	function block(title, names) {
 		var items = names.filter(function(n) { return available[n]; })
-			.map(function(n) { used[n] = true; return serviceChip(n, selected); });
+			.map(function(n) {
+				used[n] = true;
+				return serviceChip(n, selected, ipServices);
+			});
 		if (!items.length)
 			return;
 		blocks.push(E('div', { 'class': 'ikev2-chip-group' }, [
@@ -193,6 +238,9 @@ function updateStatusLine(st) {
 	if (st.updated)  lines.push('updated=' + st.updated);
 	if (st.services != null) lines.push('services=' + st.services);
 	if (st.domains  != null) lines.push('domains=' + st.domains);
+	if (st.cidrs != null) lines.push('cidrs=' + st.cidrs);
+	if (st.custom_cidrs != null) lines.push('custom_cidrs=' + st.custom_cidrs);
+	if (st.selected) lines.push('selected=' + st.selected);
 	if (st.cached_services) lines.push('cached_services=' + st.cached_services);
 	if (st.message)  lines.push('message=' + st.message);
 	pre.textContent = lines.join('\n');
@@ -248,43 +296,47 @@ return view.extend({
 			}),
 			L.resolveDefault(fs.exec(domainRouterHelper, [ 'status' ]), {
 				code: 0, stdout: ''
-			})
+			}),
+			L.resolveDefault(fs.exec(communityHelper, [ 'ip-services' ]), {
+				code: 0, stdout: ''
+			}),
+			L.resolveDefault(fs.read(manualAddressFile), '')
 		]);
 	},
 
 	doSave: function(result) {
 		var textarea   = document.querySelector('#ikev2-domain-list');
-		var checkboxes = document.querySelectorAll('.ikev2-community-service');
+		var addressTextarea = document.querySelector('#ikev2-address-list');
 		var domains;
-		var selected = [];
+		var addresses;
+		var selected = Object.keys(serviceSelection).sort();
 
-		if (!textarea) {
+		if (!textarea || !addressTextarea) {
 			result.err(_('Editor not ready — please reload the page.'));
 			return Promise.reject(new Error('textarea-missing'));
 		}
 
 		try {
 			domains = normalizeDomains(textarea.value);
+			addresses = normalizeAddresses(addressTextarea.value);
 		}
 		catch (error) {
 			result.err(error.message);
 			return Promise.reject(error);
 		}
 
-		for (var i = 0; i < checkboxes.length; i++) {
-			if (checkboxes[i].checked)
-				selected.push(checkboxes[i].value);
-		}
-
 		var manualValue   = domains.join('\n') + (domains.length ? '\n' : '');
+		var addressValue = addresses.join('\n') + (addresses.length ? '\n' : '');
 		var selectedValue = selected.join('\n') + (selected.length ? '\n' : '');
 
 		return Promise.all([
 			fs.write(manualFile, manualValue),
+			fs.write(manualAddressFile, addressValue),
 			fs.write(selectedFile, selectedValue)
 		])
 				.then(function() {
 					textarea.value = manualValue;
+					addressTextarea.value = addressValue;
 					result.busy(_('Rebuilding the PBR list…'));
 					return common.execChecked(communityHelper, [ 'schedule' ],
 						_('Unable to start the PBR rebuild')).then(function(response) {
@@ -550,8 +602,9 @@ return view.extend({
 
 		/* ── Domains tab ────────────────────────────────────────────────── */
 		var manual = data[0] || '';
+		var manualAddresses = data[10] || '';
 		var selected = {};
-		var selectedLines = (data[1] || '').trim().split(/\s+/);
+		var selectedLines = (data[1] || '').trim().split(/\s+/).filter(Boolean);
 		var status = (data[2] || '').trim();
 		var statusData = parseStatus(status);
 		var routerStatus = parseStatus(((data[8] || {}).stdout || ''));
@@ -567,11 +620,20 @@ return view.extend({
 			.filter(function(name) {
 				return /^[a-z0-9_]+$/.test(name);
 			});
+		var ipServices = {};
+		((data[9] || {}).stdout || '').trim().split(/\s+/)
+			.filter(function(name) {
+				return /^[a-z0-9_]+$/.test(name);
+			})
+			.forEach(function(name) {
+				ipServices[name] = true;
+			});
 
 		for (var i = 0; i < selectedLines.length; i++)
 			selected[selectedLines[i]] = true;
+		serviceSelection = Object.assign({}, selected);
 
-		var serviceNodes = renderServiceGroups(services, selected);
+		var serviceNodes = renderServiceGroups(services, selected, ipServices);
 
 		if (!serviceNodes.length) {
 			serviceNodes.push(E('p', { 'class': 'alert-message warning' }, [
@@ -670,7 +732,7 @@ return view.extend({
 					])
 				])),
 			common.section(_('Community services'),
-				_('Curated domain groups are cached locally and merged atomically. Broad infrastructure groups may also route unrelated sites.'),
+				_('Curated targets are cached locally and merged atomically. Services marked IP also include their direct protocol networks. Broad infrastructure groups may route unrelated sites.'),
 				E('div', {}, [
 					E('div', {}, serviceNodes),
 					E('pre', {
@@ -679,16 +741,27 @@ return view.extend({
 						'style': status ? '' : 'display:none;'
 					}, [ status ])
 				])),
-			common.section(_('Manual domains'),
-				_('One plain domain per line. Manual entries are never overwritten by community updates.'),
+			common.section(_('Custom domains'),
+				_('One plain domain per line. Custom entries are never overwritten by service updates.'),
 				E('textarea', {
 					'id': 'ikev2-domain-list',
 					'class': 'cbi-input-textarea ikev2-domain-editor',
 					'spellcheck': 'false'
-				}, [ manual ]))
+				}, [ manual ])),
+			common.section(_('Custom IP addresses and networks'),
+				_('One IPv4 address or CIDR network per line. A single address is stored as /32.'),
+				E('textarea', {
+					'id': 'ikev2-address-list',
+					'class': 'cbi-input-textarea ikev2-domain-editor',
+					'spellcheck': 'false',
+					'placeholder': '203.0.113.10\n198.51.100.0/24'
+				}, [ manualAddresses ]))
 		]);
 
 		var manualCount = manual.split('\n').filter(function(line) {
+			return line.trim() && line.trim().charAt(0) !== '#';
+		}).length;
+		var manualAddressCount = manualAddresses.split('\n').filter(function(line) {
 			return line.trim() && line.trim().charAt(0) !== '#';
 		}).length;
 
@@ -709,7 +782,7 @@ return view.extend({
 			common.styles(),
 			E('div', { 'class': 'ikev2-page' }, [
 				common.header(_('Policy Routing'),
-					_('Build the IPv4 VPN policy from curated services, manual domains and per-device modes.'),
+					_('Build the IPv4 VPN policy from curated services, custom destinations and per-device modes.'),
 					common.pill(statusData.state === 'ok' || activeDomains > 0 ?
 						_('Policy active') : _('Policy empty'),
 						statusData.state === 'ok' || activeDomains > 0 ? 'good' : 'warn')),
@@ -720,9 +793,12 @@ return view.extend({
 					common.card(_('Selected services'),
 						String(selectedLines.filter(Boolean).length),
 						_('Community groups')),
-					common.card(_('Manual entries'),
-						String(manualCount),
-						_('Locally maintained')),
+					common.card(_('Active IP destinations'),
+						statusData.cidrs || '0',
+						_('Services and custom entries')),
+					common.card(_('Custom destinations'),
+						String(manualCount + manualAddressCount),
+						_('%d domains, %d IP entries').format(manualCount, manualAddressCount)),
 					common.card(_('Apply behavior'),
 						_('Atomic'),
 						_('Previous policy remains active on failure'))
