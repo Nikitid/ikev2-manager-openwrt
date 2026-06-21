@@ -2,16 +2,23 @@
 
 ## Resolver chain
 
-IKEv2 Manager keeps `dnsmasq-full` on port 53 for LAN and VPN clients:
+IKEv2 Manager keeps `dnsmasq-full` on port 53 for LAN and VPN clients.
+Reliable domain routing inserts sing-box between dnsmasq and the selected
+upstream:
 
 ```text
-client -> dnsmasq-full -> dnsproxy -> public resolver
+client -> dnsmasq-full -> sing-box DNS -> dnsproxy or existing resolver
 ```
 
-`dnsmasq-full` provides DHCP, local-name resolution, caching integration and
-the nftset updates used by PBR. It forwards public queries using ordinary DNS;
-encrypted upstream transports are provided by the separate `dnsproxy`
-process listening on `127.0.0.1:5453`.
+`dnsmasq-full` provides DHCP and local-name resolution. In reliable mode its
+cache is disabled. sing-box returns persistent FakeIP addresses from
+`198.18.0.0/15` for selected domains and forwards every other query to the
+resolver that was active before reliable mode was enabled.
+
+The legacy nftset updates used by PBR remain enabled as a migration fallback
+for connections opened against public DNS answers before the cutover.
+Encrypted upstream transports are provided by the separate `dnsproxy` process
+listening on `127.0.0.1:5453`.
 
 ## Supported transports
 
@@ -48,12 +55,28 @@ For every update the runtime:
 
 1. validates the transport and endpoint syntax;
 2. updates only the dnsproxy listener, upstream and cache settings;
-3. points the primary dnsmasq instance at `127.0.0.1#5453`;
-4. restarts both services;
+3. points sing-box at `127.0.0.1#5453` when reliable routing is active,
+   otherwise points dnsmasq there directly;
+4. restarts only the affected resolver services;
 5. resolves `openwrt.org` through the local dnsmasq instance;
 6. restores the immediately previous configuration if validation fails.
 
-Selecting **Keep existing router DNS** restores the original snapshot.
+Selecting **Keep existing router DNS** restores the original snapshot. When
+reliable routing is active, that restored resolver becomes the sing-box
+upstream and dnsmasq continues to point at the local FakeIP resolver.
+
+## Reliable domain classification
+
+The FakeIP mapping is stored under
+`/etc/ikev2-manager/domain-router-cache.db` and is included in the sysupgrade
+keep list. Restarting sing-box or rebuilding a community list therefore does
+not change addresses already known to clients.
+
+nftables sends only traffic whose destination is in `198.18.0.0/15` to the
+sing-box TProxy listener. sing-box then checks the original source network:
+covered LAN and inbound-IKEv2 networks use the outbound tunnel; excluded or
+uncovered sources use the direct route. Ordinary public IP traffic never
+enters the TProxy path.
 
 ## Upstream references
 

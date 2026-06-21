@@ -7,10 +7,12 @@
 				"/etc/pbr-ikev2-domains.manual.txt": [ "read" ],
 				"/etc/pbr-ikev2-community-selected.txt": [ "read" ],
 				"/tmp/ikev2-domains-community.status": [ "read" ],
+				"/var/run/ikev2-domain-router.status": [ "read" ],
 				"/tmp/ikev2-manager-deps.status": [ "read" ],
 				"/usr/libexec/ikev2-devices networks": [ "exec" ],
 				"/usr/libexec/ikev2-devices dump": [ "exec" ],
 				"/usr/libexec/ikev2-domains-community catalog": [ "exec" ],
+				"/usr/libexec/ikev2-domain-router status": [ "exec" ],
 				"/usr/libexec/ikev2-manager overview": [ "exec" ],
 				"/usr/libexec/ikev2-manager users": [ "exec" ],
 				"/usr/libexec/ikev2-manager users-show": [ "exec" ],
@@ -55,6 +57,7 @@
 				"/usr/libexec/ikev2-manager-system *": [ "exec" ],
 				"/usr/libexec/ikev2-domains-community *": [ "exec" ],
 				"/usr/libexec/ikev2-domains-restart": [ "exec" ],
+				"/usr/libexec/ikev2-domain-router *": [ "exec" ],
 				"/usr/libexec/ikev2-devices *": [ "exec" ]
 			},
 			"ubus": {

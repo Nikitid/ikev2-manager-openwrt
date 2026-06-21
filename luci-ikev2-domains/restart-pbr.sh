@@ -58,6 +58,10 @@ drop_reclassified_connections() {
 
 	trap 'rmdir "$lock_dir"; rm -f "$global_lock_status"; rmdir "$global_lock_dir" 2>/dev/null || true' EXIT
 	{
+		if [ "$(uci -q get ikev2-manager.domains.engine)" = fakeip ] &&
+		   [ -x /usr/libexec/ikev2-domain-router ]; then
+			/usr/libexec/ikev2-domain-router refresh
+		fi
 		/etc/init.d/ikev2-xfrm start
 		/usr/libexec/ikev2-sync-vips
 		/etc/init.d/pbr restart

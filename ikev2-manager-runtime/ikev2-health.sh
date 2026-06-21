@@ -3,9 +3,53 @@
 status_file='/var/run/ikev2-health.status'
 volatile_set_dump='/var/run/pbr-ikev2-set4.dump'
 persistent_set_dump='/etc/ikev2-manager/pbr-set4.dump'
+probe_state='/var/run/ikev2-health-probe.state'
+recovery_stamp='/var/run/ikev2-health-recovery.last'
+probe_interval=60
+probe_fail_limit=2
 
 has_proxy4() {
 	printf '%s' "$1" | grep -q 'name=proxy4[^{}]* state=INSTALLED'
+}
+
+tunnel_probe() {
+	curl -4fsS --interface ipsec-out \
+		--connect-timeout 4 --max-time 8 \
+		https://1.1.1.1/cdn-cgi/trace 2>/dev/null |
+		grep -q '^ip=[0-9]'
+}
+
+probe_due() {
+	now="$1"
+	last="$(sed -n 's/^last=//p' "$probe_state" 2>/dev/null | tail -n1)"
+	case "$last" in '' | *[!0-9]*) last=0 ;; esac
+	[ $((now - last)) -ge "$probe_interval" ]
+}
+
+probe_failures() {
+	value="$(sed -n 's/^failures=//p' "$probe_state" 2>/dev/null | tail -n1)"
+	case "$value" in '' | *[!0-9]*) value=0 ;; esac
+	printf '%s\n' "$value"
+}
+
+save_probe() {
+	{
+		printf 'last=%s\n' "$1"
+		printf 'failures=%s\n' "$2"
+	} >"${probe_state}.new"
+	mv "${probe_state}.new" "$probe_state"
+}
+
+recover_stale_tunnel() {
+	now="$1"
+	cooldown="$(uci -q get ikev2-manager.client.reconnect_cooldown || echo 15)"
+	case "$cooldown" in '' | *[!0-9]*) cooldown=15 ;; esac
+	last="$(cat "$recovery_stamp" 2>/dev/null || echo 0)"
+	case "$last" in '' | *[!0-9]*) last=0 ;; esac
+	[ $((now - last)) -ge "$cooldown" ] || return 0
+	[ ! -d /var/run/ikev2-action.lock ] || return 0
+	printf '%s\n' "$now" >"$recovery_stamp"
+	/usr/libexec/ikev2-manager reconnect-client >/dev/null 2>&1 || :
 }
 
 domain_set_name() {
@@ -77,11 +121,30 @@ while true; do
 	if [ "$client_enabled" = 1 ] && has_proxy4 "$raw"; then
 		if /usr/libexec/ikev2-sync-vips &&
 			/usr/share/pbr/pbr.user.ikev2out; then
-			printf 'state=up updated=%s\n' "$(date +%s)" >"$status_file"
+			now="$(date +%s)"
+			failures="$(probe_failures)"
+			if probe_due "$now"; then
+				if tunnel_probe; then
+					failures=0
+				else
+					failures=$((failures + 1))
+				fi
+				save_probe "$now" "$failures"
+			fi
+			if [ "$failures" -ge "$probe_fail_limit" ]; then
+				printf 'state=degraded updated=%s probe_failures=%s\n' \
+					"$now" "$failures" >"$status_file"
+				recover_stale_tunnel "$now"
+				save_probe "$now" 0
+			else
+				printf 'state=up updated=%s probe_failures=%s\n' \
+					"$now" "$failures" >"$status_file"
+			fi
 		else
 			printf 'state=degraded updated=%s\n' "$(date +%s)" >"$status_file"
 		fi
 	elif [ "$client_enabled" = 1 ]; then
+		rm -f "$probe_state"
 		rm -f /var/run/ikev2-vip4
 		/usr/share/pbr/pbr.user.ikev2out || :
 		printf 'state=down updated=%s\n' "$(date +%s)" >"$status_file"

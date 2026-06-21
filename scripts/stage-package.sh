@@ -27,6 +27,7 @@ install_file() {
 install_file 600 openwrt/files/etc/config/ikev2-manager /etc/config/ikev2-manager
 install_file 755 ikev2-manager-runtime/ikev2-xfrm.init /etc/init.d/ikev2-xfrm
 install_file 755 ikev2-manager-runtime/ikev2-health.init /etc/init.d/ikev2-health
+install_file 755 ikev2-manager-runtime/ikev2-domain-router.init /etc/init.d/ikev2-domain-router
 install_file 755 ikev2-manager-runtime/90-ikev2-wan /etc/hotplug.d/iface/90-ikev2-pbr
 install_file 755 ikev2-manager-runtime/90-ikev2-acme /etc/hotplug.d/acme/90-ikev2-pbr
 install_file 600 ikev2-manager-runtime/20-router-xfrm.conf /etc/strongswan.d/charon/20-ikev2-pbr.conf
@@ -40,6 +41,7 @@ install_file 644 ikev2-manager-runtime/lib/actions.sh /usr/libexec/ikev2-manager
 install_file 644 ikev2-manager-runtime/lib/routing.sh /usr/libexec/ikev2-manager.d/routing.sh
 install_file 755 ikev2-manager-runtime/ikev2-health.sh /usr/libexec/ikev2-health
 install_file 755 ikev2-manager-runtime/ikev2-sync-vips.sh /usr/libexec/ikev2-sync-vips
+install_file 755 ikev2-manager-runtime/ikev2-domain-router.sh /usr/libexec/ikev2-domain-router
 install_file 755 luci-ikev2-domains/community-domains.sh /usr/libexec/ikev2-domains-community
 install_file 755 luci-ikev2-domains/restart-pbr.sh /usr/libexec/ikev2-domains-restart
 install_file 755 luci-ikev2-domains/ikev2-devices.sh /usr/libexec/ikev2-devices
@@ -92,7 +94,7 @@ PY
 	printf 'Package: %s\n' "$PKG_NAME"
 	printf 'Version: %s-r%s\n' "$PKG_VERSION" "$PKG_RELEASE"
 	cat <<'EOF'
-Depends: luci-base, rpcd-mod-file, jsonfilter
+Depends: luci-base, rpcd-mod-file, jsonfilter, sing-box, kmod-nft-tproxy, kmod-nf-tproxy
 Section: luci
 Architecture: all
 Maintainer: nikitid

@@ -39,7 +39,11 @@ also recover a failed boot-time initiation without competing with a healthy
 SA. The minimum interval between automatic attempts is configurable under
 Outbound tunnel -> Connection -> Advanced connectivity (15-300 seconds,
 default 15). The health service also synchronizes the virtual IP and repairs
-derived routing state. If a rekey changes the assigned virtual IPv4, stale
+derived routing state. Once per minute it sends a small HTTPS probe through
+`ipsec-out` to Cloudflare's `1.1.1.1/cdn-cgi/trace`; two consecutive failures
+trigger the same serialized reconnect action used by LuCI. This catches a
+CHILD_SA that remains installed but no longer forwards packets without reacting
+to one transient timeout. If a rekey changes the assigned virtual IPv4, stale
 conntrack entries using the previous VIP are removed while ordinary WAN
 sessions are retained. The learned IPv4 domain set is kept in RAM during
 normal operation and written once on an orderly shutdown, then restored on the

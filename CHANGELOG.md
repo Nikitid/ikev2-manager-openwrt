@@ -5,7 +5,18 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
-No changes yet.
+- Added an experimental reliable domain-routing engine based on sing-box
+  FakeIP and nftables TProxy. Selected domains keep stable virtual addresses,
+  while only covered LAN and inbound-IKEv2 sources use the outbound tunnel.
+- Kept the existing PBR nftset policy as a migration fallback for connections
+  opened before FakeIP activation.
+- Added transactional DNS cutover, persistent FakeIP mappings, automatic
+  rollback, boot restoration and safe refresh after domain or coverage changes.
+- Added a LuCI switch and runtime diagnostics for the domain-routing engine.
+- Added a low-frequency outbound data-plane probe so an installed but
+  non-forwarding CHILD_SA is recovered after two consecutive failures.
+- Avoided false reconnect errors when IKE_AUTH completes just after the VICI
+  initiation timeout.
 
 ## 1.0.0-r5 - 2026-06-21
 
