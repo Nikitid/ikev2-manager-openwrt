@@ -12,7 +12,7 @@
 set -u
 
 BASE_RULE='ikev2pbr_domains'
-DOMAINS_FILE='file:///etc/pbr-ikev2-domains.txt'
+DEST_FILES='file:///etc/pbr-ikev2-domains.txt file:///etc/pbr-ikev2-service-cidrs.txt'
 RESTART_HELPER='/usr/libexec/ikev2-domains-restart'
 
 valid_addr() {
@@ -132,7 +132,7 @@ cmd_add_override() {
             uci set "pbr.${sec}.name=VPN Exclude: $addr"
             uci set "pbr.${sec}.interface=$(uci -q get ikev2-manager.globals.wan_interface || echo wan)"
             uci set "pbr.${sec}.src_addr=$addr"
-            uci set "pbr.${sec}.dest_addr=$DOMAINS_FILE"
+            uci set "pbr.${sec}.dest_addr=$DEST_FILES"
             uci set "pbr.${sec}.proto=all"
             uci set "pbr.${sec}.enabled=1"
             ;;

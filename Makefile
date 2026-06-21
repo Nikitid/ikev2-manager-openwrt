@@ -6,7 +6,7 @@ PKG_NAME:=luci-app-ikev2-manager
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
 PKGARCH:=all
@@ -35,6 +35,7 @@ define Package/luci-app-ikev2-manager/conffiles
 /etc/config/ikev2-manager
 /etc/pbr-ikev2-domains.txt
 /etc/pbr-ikev2-domains.manual.txt
+/etc/pbr-ikev2-addresses.manual.txt
 /etc/pbr-ikev2-community-selected.txt
 endef
 
@@ -95,6 +96,7 @@ define Package/luci-app-ikev2-manager/install
 	$(INSTALL_DIR) $(1)/etc/ikev2-manager
 	$(INSTALL_DATA) ./openwrt/files/etc/ikev2-manager/README $(1)/etc/ikev2-manager/README
 	$(INSTALL_CONF) ./openwrt/files/etc/pbr-ikev2-domains.manual.txt $(1)/etc/pbr-ikev2-domains.manual.txt
+	$(INSTALL_CONF) ./openwrt/files/etc/pbr-ikev2-addresses.manual.txt $(1)/etc/pbr-ikev2-addresses.manual.txt
 	touch $(1)/etc/pbr-ikev2-domains.txt
 	touch $(1)/etc/pbr-ikev2-community-selected.txt
 	chmod 600 $(1)/etc/pbr-ikev2-domains.txt
@@ -130,6 +132,7 @@ define Package/luci-app-ikev2-manager/install
 	$(INSTALL_DIR) $(1)/usr/share/ikev2-domains/local-services
 	$(INSTALL_DATA) ./luci-ikev2-domains/community-services.txt $(1)/usr/share/ikev2-domains/community-services
 	$(INSTALL_DATA) ./luci-ikev2-domains/local-services/*.lst $(1)/usr/share/ikev2-domains/local-services/
+	$(INSTALL_DATA) ./luci-ikev2-domains/local-services/*.cidrs $(1)/usr/share/ikev2-domains/local-services/
 
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d $(1)/usr/share/rpcd/acl.d
 	$(INSTALL_DATA) ./luci-ikev2-manager/menu.json $(1)/usr/share/luci/menu.d/luci-app-ikev2-manager.json

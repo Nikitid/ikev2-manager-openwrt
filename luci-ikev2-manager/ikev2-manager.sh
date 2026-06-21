@@ -1019,6 +1019,7 @@ overview() {
 	printf 'configured_users=%s\n' "$(count_lines "$users_db")"
 	printf 'pbr_domains=%s\n' "$(count_lines "$root/etc/pbr-ikev2-domains.txt")"
 	printf 'manual_domains=%s\n' "$(count_lines "$root/etc/pbr-ikev2-domains.manual.txt")"
+	printf 'manual_addresses=%s\n' "$(count_lines "$root/etc/pbr-ikev2-addresses.manual.txt")"
 	printf 'community_services=%s\n' "$(count_lines "$root/etc/pbr-ikev2-community-selected.txt")"
 	printf 'dns_hijack=%s\n' "$(
 		if nft list ruleset 2>/dev/null | grep -Eq 'dport 53.*dnat|dnat.*dport 53'; then

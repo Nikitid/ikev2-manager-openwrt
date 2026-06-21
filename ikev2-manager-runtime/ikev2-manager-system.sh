@@ -801,6 +801,7 @@ sync_inbound_access() {
 
 sync_pbr() {
 	domain_file='/etc/pbr-ikev2-domains.txt'
+	service_cidr_file='/etc/pbr-ikev2-service-cidrs.txt'
 	manual_file='/etc/pbr-ikev2-domains.manual.txt'
 	source_interfaces="$(get_list globals source_interface)"
 	src=''
@@ -858,6 +859,19 @@ sync_pbr() {
 		uci set pbr.ikev2pbr_domains.enabled='1'
 	else
 		uci set pbr.ikev2pbr_domains.enabled='0'
+	fi
+
+	uci -q delete pbr.ikev2pbr_service_cidrs || true
+	uci set pbr.ikev2pbr_service_cidrs=policy
+	uci set pbr.ikev2pbr_service_cidrs.name='IKEv2 PBR service networks'
+	uci set pbr.ikev2pbr_service_cidrs.interface='ikev2out'
+	uci set "pbr.ikev2pbr_service_cidrs.src_addr=$src"
+	uci set pbr.ikev2pbr_service_cidrs.dest_addr='file:///etc/pbr-ikev2-service-cidrs.txt'
+	uci set pbr.ikev2pbr_service_cidrs.proto='all'
+	if domain_file_has_entries "$service_cidr_file"; then
+		uci set pbr.ikev2pbr_service_cidrs.enabled='1'
+	else
+		uci set pbr.ikev2pbr_service_cidrs.enabled='0'
 	fi
 
 	uci -q delete pbr.ikev2pbr_include || true
@@ -1257,6 +1271,7 @@ remove_managed() {
 	uci -q delete network.ikev2out || true
 	uci commit network
 	uci -q delete pbr.ikev2pbr_domains || true
+	uci -q delete pbr.ikev2pbr_service_cidrs || true
 	uci -q delete pbr.ikev2pbr_include || true
 	uci -q del_list pbr.config.supported_interface='ikev2out' || true
 	if [ "$(uci -q get "$config.globals.pbr_saved" 2>/dev/null)" = 1 ]; then
@@ -1586,6 +1601,9 @@ case "${1:-}" in
 		;;
 	apply)
 		apply_system
+		;;
+	_sync-pbr)
+		sync_pbr
 		;;
 	server-apply)
 		apply_server_runtime "${2:-0}"

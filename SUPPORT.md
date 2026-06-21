@@ -19,4 +19,4 @@ credentials. Never attach a sysupgrade backup or files from:
 ```
 
 Unsupported firmware may still be useful for investigation, but support is
-best-effort until that platform appears in `docs/COMPATIBILITY.md`.
+best-effort until it is explicitly listed as supported in the README.

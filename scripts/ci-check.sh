@@ -16,6 +16,7 @@ find luci-ikev2-domains luci-ikev2-manager \
 	-type f -name '*.js' -exec node --check {} \;
 
 ./scripts/test-runtime-modules.sh
+./scripts/test-community-domains.sh
 
 PYTHONPYCACHEPREFIX="$root/build/pycache" \
 	python3 -m py_compile scripts/pack-ipk.py
