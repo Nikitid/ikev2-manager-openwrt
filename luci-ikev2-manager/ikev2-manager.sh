@@ -414,9 +414,14 @@ render_users() {
 	tmp="${inbound_secrets}.new"
 	{
 		echo 'secrets {'
+		index=0
 		while IFS="$(printf '\t')" read -r user secret; do
 			[ -n "$user" ] || continue
-			printf '\teap-%s {\n' "$user"
+			index=$((index + 1))
+			# Keep section names independent from user-controlled identities.
+			# Dots and other valid EAP-ID characters are not valid in every
+			# strongSwan settings section name.
+			printf '\teap-%s {\n' "$index"
 			printf '\t\tid = "%s"\n' "$user"
 			printf '\t\tsecret = %s\n' "$secret"
 			echo '	}'
@@ -430,6 +435,13 @@ render_users() {
 	atomic_install "$tmp" "$inbound_secrets" 600
 }
 
+reload_credentials() {
+	# Replacing an EAP secret under the same identity does not reliably evict
+	# the previous in-memory credential. Clear and immediately reload the full
+	# credential set; established IKE SAs are not terminated by this operation.
+	swanctl_quiet --load-creds --clear --noprompt >/dev/null
+}
+
 update_user() {
 	user="$1"
 	secret="$2"
@@ -439,7 +451,7 @@ update_user() {
 	sort -t "$(printf '\t')" -k1,1 "$tmp" -o "$tmp"
 	atomic_install "$tmp" "$users_db" 600
 	render_users
-	swanctl_quiet --load-creds >/dev/null || :
+	reload_credentials || die 'Unable to reload VPN credentials'
 }
 
 delete_user() {
@@ -448,7 +460,7 @@ delete_user() {
 	awk -F '\t' -v user="$user" '$1 != user' "$users_db" >"$tmp"
 	atomic_install "$tmp" "$users_db" 600
 	render_users
-	swanctl_quiet --load-creds >/dev/null || :
+	reload_credentials || die 'Unable to reload VPN credentials'
 }
 
 getv() {
