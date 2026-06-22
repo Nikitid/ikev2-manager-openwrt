@@ -17,6 +17,7 @@ find luci-ikev2-domains luci-ikev2-manager \
 
 ./scripts/test-runtime-modules.sh
 ./scripts/test-community-domains.sh
+./scripts/test-user-credentials.sh
 
 PYTHONPYCACHEPREFIX="$root/build/pycache" \
 	python3 -m py_compile scripts/pack-ipk.py

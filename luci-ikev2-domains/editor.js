@@ -695,7 +695,7 @@ return view.extend({
 
 		var domainsContent = E('div', {}, [
 			common.section(_('Domain routing engine'),
-				_('Choose how destinations from the domain list are classified. This changes only selected services; other traffic continues to use the normal WAN route.'),
+				_('Reliable mode keeps selected domains on the IKEv2 route even when their public addresses change. Other traffic continues through the normal WAN.'),
 				E('div', { 'class': 'ikev2-engine' }, [
 					E('div', { 'class': 'ikev2-engine-head' }, [
 						E('div', { 'class': 'ikev2-engine-state' }, [
@@ -706,29 +706,6 @@ return view.extend({
 							engineResult.node,
 							engineButton
 						])
-					]),
-					E('div', { 'class': 'ikev2-engine-grid' }, [
-						E('div', { 'class': 'ikev2-engine-item' }, [
-							E('strong', {}, [ _('DNS classification') ]),
-							E('span', {}, [
-								_('dnsmasq forwards public queries to sing-box. Listed domains receive persistent addresses from 198.18.0.0/15; other domains receive normal public addresses.')
-							])
-						]),
-						E('div', { 'class': 'ikev2-engine-item' }, [
-							E('strong', {}, [ _('Selective interception') ]),
-							E('span', {}, [
-								_('nftables sends only FakeIP connections to TProxy. sing-box checks the original source network and applies the existing fail-closed IKEv2 routing mark.')
-							])
-						]),
-						E('div', { 'class': 'ikev2-engine-item' }, [
-							E('strong', {}, [ _('Persistence and rollback') ]),
-							E('span', {}, [
-								_('FakeIP mappings survive service restarts. The previous DNS configuration is restored automatically if activation or validation fails.')
-							])
-						])
-					]),
-					E('div', { 'class': 'ikev2-engine-foot' }, [
-						_('The legacy PBR nftset policy remains enabled as a transition fallback for connections opened before reliable mode was activated.')
 					])
 				])),
 			common.section(_('Community services'),
@@ -758,13 +735,6 @@ return view.extend({
 				}, [ manualAddresses ]))
 		]);
 
-		var manualCount = manual.split('\n').filter(function(line) {
-			return line.trim() && line.trim().charAt(0) !== '#';
-		}).length;
-		var manualAddressCount = manualAddresses.split('\n').filter(function(line) {
-			return line.trim() && line.trim().charAt(0) !== '#';
-		}).length;
-
 		var saveResult = common.inlineResult();
 		var saveBtn = E('button', { 'class': 'cbi-button cbi-button-apply' }, [ _('Save') ]);
 		saveBtn.addEventListener('click', function() {
@@ -786,23 +756,6 @@ return view.extend({
 					common.pill(statusData.state === 'ok' || activeDomains > 0 ?
 						_('Policy active') : _('Policy empty'),
 						statusData.state === 'ok' || activeDomains > 0 ? 'good' : 'warn')),
-				E('div', { 'class': 'ikev2-grid' }, [
-					common.card(_('Active domains'),
-						statusData.domains || String(activeDomains),
-						_('Current merged PBR list')),
-					common.card(_('Selected services'),
-						String(selectedLines.filter(Boolean).length),
-						_('Community groups')),
-					common.card(_('Active IP destinations'),
-						statusData.cidrs || '0',
-						_('Services and custom entries')),
-					common.card(_('Custom destinations'),
-						String(manualCount + manualAddressCount),
-						_('%d domains, %d IP entries').format(manualCount, manualAddressCount)),
-					common.card(_('Apply behavior'),
-						_('Atomic'),
-						_('Previous policy remains active on failure'))
-				]),
 				domainsContent,
 				E('div', { 'class': 'ikev2-note warn' }, [
 					_('Clients must use router DNS. Plain DNS is redirected and DoT is blocked, but browser DoH and Apple Private Relay must still be disabled for deterministic domain routing.')

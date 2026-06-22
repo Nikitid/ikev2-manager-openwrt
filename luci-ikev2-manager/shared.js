@@ -295,33 +295,15 @@ var ru = {
 	'Build the IPv4 VPN policy from curated services, custom destinations and per-device modes.': 'Собирает IPv4 VPN-политику из готовых сервисов, собственных направлений и режимов устройств.',
 	'Policy active': 'Политика активна',
 	'Policy empty': 'Политика пуста',
-	'Active domains': 'Активные домены',
-	'Current merged PBR list': 'Текущий объединенный PBR-список',
-	'Selected services': 'Выбранные сервисы',
-	'Community groups': 'Готовые наборы',
-	'Active IP destinations': 'Активные IP-направления',
-	'Services and custom entries': 'Сервисы и собственные записи',
-	'Custom destinations': 'Собственные направления',
-	'%d domains, %d IP entries': '%d доменов, %d IP-записей',
-	'Apply behavior': 'Применение',
-	'Atomic': 'Атомарно',
-	'Previous policy remains active on failure': 'При ошибке остается предыдущая политика',
 	'Community services': 'Готовые сервисы',
 	'Domain routing engine': 'Механизм доменной маршрутизации',
-	'Choose how destinations from the domain list are classified. This changes only selected services; other traffic continues to use the normal WAN route.': 'Выберите способ определения направлений из доменного списка. Режим влияет только на выбранные сервисы; остальной трафик продолжает идти через обычный WAN.',
+	'Reliable mode keeps selected domains on the IKEv2 route even when their public addresses change. Other traffic continues through the normal WAN.': 'Надёжный режим сохраняет маршрут выбранных доменов через IKEv2 даже при смене их публичных адресов. Остальной трафик продолжает идти через обычный WAN.',
 	'Reliable mode active': 'Надёжный режим активен',
 	'Legacy mode active': 'Обычный режим активен',
 	'Enable reliable mode': 'Включить надёжный режим',
 	'Use legacy mode': 'Вернуться к обычному режиму',
 	'Selected domains receive stable FakeIP addresses. Only connections to those addresses from covered networks enter the IKEv2 path.': 'Выбранные домены получают стабильные FakeIP-адреса. В IKEv2 попадают только соединения к этим адресам из подключённых к политике сетей.',
 	'dnsmasq currently classifies domains by their public IP addresses. Existing connections may keep an earlier WAN route after an address changes.': 'Сейчас dnsmasq определяет домены по публичным IP-адресам. После смены адреса уже открытое соединение может сохранить прежний маршрут через WAN.',
-	'DNS classification': 'Определение по DNS',
-	'dnsmasq forwards public queries to sing-box. Listed domains receive persistent addresses from 198.18.0.0/15; other domains receive normal public addresses.': 'dnsmasq передаёт публичные запросы в sing-box. Домены из списка получают постоянные адреса из 198.18.0.0/15, остальные — обычные публичные адреса.',
-	'Selective interception': 'Выборочный перехват',
-	'nftables sends only FakeIP connections to TProxy. sing-box checks the original source network and applies the existing fail-closed IKEv2 routing mark.': 'nftables передаёт в TProxy только соединения к FakeIP. sing-box проверяет исходную сеть и применяет существующую IKEv2-метку с запретом обхода через WAN при недоступном туннеле.',
-	'Persistence and rollback': 'Сохранение и откат',
-	'FakeIP mappings survive service restarts. The previous DNS configuration is restored automatically if activation or validation fails.': 'Соответствия FakeIP сохраняются при перезапуске службы. Если включение или проверка завершается ошибкой, предыдущая конфигурация DNS восстанавливается автоматически.',
-	'The legacy PBR nftset policy remains enabled as a transition fallback for connections opened before reliable mode was activated.': 'Старая политика PBR/nftset остаётся переходным резервом для соединений, открытых до включения надёжного режима.',
 	'Unable to start routing-engine change': 'Не удалось запустить смену механизма маршрутизации',
 	'Includes direct service IP networks': 'Включает прямые IP-сети сервиса',
 	'Reliable mode needs attention': 'Надёжный режим требует внимания',
@@ -1017,28 +999,23 @@ function styles() {
 			.ikev2-section-head h4 { margin: 0 0 .3rem; font-weight: 700; letter-spacing: -.01em; }
 			.ikev2-section-head p { margin: 0; color: var(--ikev2-muted); line-height: 1.5; }
 			.ikev2-engine {
-				display: grid;
-				gap: 1rem;
+				display: block;
 			}
 			.ikev2-engine-head {
 				display: flex;
 				align-items: center;
 				justify-content: space-between;
 				gap: 1.25rem;
-				padding: 1rem 1.05rem;
-				border: 1px solid var(--ikev2-border);
-				border-radius: var(--ikev2-radius-sm);
-				background: var(--ikev2-surface);
 			}
 			.ikev2-engine-state {
 				display: grid;
 				justify-items: start;
-				gap: .65rem;
+				gap: .55rem;
 				min-width: 0;
 			}
 			.ikev2-engine-summary {
 				margin: 0;
-				max-width: 48rem;
+				max-width: 52rem;
 				color: var(--ikev2-muted);
 				line-height: 1.5;
 			}
@@ -1051,40 +1028,7 @@ function styles() {
 				flex: none;
 			}
 			.ikev2-engine-action .cbi-button {
-				min-width: 13.5rem;
-			}
-			.ikev2-engine-grid {
-				display: grid;
-				grid-template-columns: repeat(3, minmax(0, 1fr));
-				gap: .75rem;
-			}
-			.ikev2-engine-item {
-				display: grid;
-				align-content: start;
-				gap: .35rem;
-				min-width: 0;
-				padding: .9rem .95rem;
-				border: 1px solid var(--ikev2-border);
-				border-radius: var(--ikev2-radius-sm);
-				background: color-mix(in srgb, var(--ikev2-surface) 72%, transparent);
-			}
-			.ikev2-engine-item strong {
-				font-size: .84rem;
-				font-weight: 720;
-			}
-			.ikev2-engine-item span {
-				color: var(--ikev2-muted);
-				font-size: .8rem;
-				line-height: 1.5;
-			}
-			.ikev2-engine-foot {
-				padding: .75rem .9rem;
-				border-left: 3px solid color-mix(in srgb, var(--ikev2-info) 72%, transparent);
-				border-radius: 0 var(--ikev2-radius-sm) var(--ikev2-radius-sm) 0;
-				background: color-mix(in srgb, var(--ikev2-info) 8%, transparent);
-				color: var(--ikev2-muted);
-				font-size: .8rem;
-				line-height: 1.5;
+				min-width: 11.5rem;
 			}
 			.ikev2-actions {
 				display: flex;
@@ -1841,7 +1785,6 @@ function styles() {
 					grid-template-columns: minmax(10rem, .8fr) minmax(16rem, 1.4fr);
 				}
 				.ikev2-user-actions { grid-column: 1 / -1; }
-				.ikev2-engine-grid { grid-template-columns: 1fr; }
 			}
 			@media (max-width: 600px) {
 				.ikev2-header, .ikev2-section-head { display: block; }

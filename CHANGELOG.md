@@ -5,6 +5,15 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Simplified the Policy Routing page by removing oversized summary cards and
+  reducing the domain-routing engine to its status, explanation and mode
+  switch.
+- Fixed inbound EAP password changes leaving an older credential loaded in
+  charon. Credential updates now clear and reload the full set without
+  restarting strongSwan or established tunnels.
+- Switched generated EAP secret sections to stable numeric names so valid user
+  identities never become settings-parser section names.
+
 ## 1.0.0-r6 - 2026-06-21
 
 - Added an experimental reliable domain-routing engine based on sing-box
