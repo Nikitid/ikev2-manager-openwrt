@@ -4,19 +4,6 @@ case "$ACTION" in
 	issued | renewed)
 		[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || exit 0
 		[ "$(uci -q get ikev2-manager.server.enabled)" = 1 ] || exit 0
-		identity="$(uci -q get ikev2-manager.server.identity)"
-		cert_source="$(uci -q get ikev2-manager.server.cert_source || echo /etc/ssl/acme)"
-		cert="$(uci -q get ikev2-manager.server.cert_file || true)"
-		key="$(uci -q get ikev2-manager.server.key_file || true)"
-		[ -n "$cert" ] || cert="$cert_source/$identity.fullchain.crt"
-		[ -n "$key" ] || key="$cert_source/$identity.key"
-		[ -s "$cert" ] && [ -s "$key" ] || exit 0
-
-		umask 077
-		cp "$cert" /etc/swanctl/x509/ikev2.pem.new
-		cp "$key" /etc/swanctl/private/ikev2.key.new
-		mv /etc/swanctl/x509/ikev2.pem.new /etc/swanctl/x509/ikev2.pem
-		mv /etc/swanctl/private/ikev2.key.new /etc/swanctl/private/ikev2.key
-		swanctl --load-creds
+		/usr/libexec/ikev2-manager server-cert-sync
 		;;
 esac

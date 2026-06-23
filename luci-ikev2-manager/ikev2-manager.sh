@@ -562,7 +562,8 @@ sync_server_certificate() {
 	[ -s "$cert_file" ] || die "Server certificate not found: $cert_file"
 	[ -s "$key_file" ] || die "Server private key not found: $key_file"
 
-	mkdir -p "$root/etc/swanctl/x509" "$root/etc/swanctl/private"
+	mkdir -p "$root/etc/swanctl/x509" "$root/etc/swanctl/x509ca" \
+		"$root/etc/swanctl/private"
 	umask 077
 	cp "$cert_file" "$root/etc/swanctl/x509/ikev2.pem.new"
 	cp "$key_file" "$root/etc/swanctl/private/ikev2.key.new"
@@ -570,6 +571,39 @@ sync_server_certificate() {
 	mv "$root/etc/swanctl/private/ikev2.key.new" "$root/etc/swanctl/private/ikev2.key"
 	chmod 644 "$root/etc/swanctl/x509/ikev2.pem"
 	chmod 600 "$root/etc/swanctl/private/ikev2.key"
+
+	# swanctl loads only the first certificate from a concatenated PEM placed
+	# in x509/. Split the remaining fullchain certificates into x509ca/ so
+	# charon can build and send the intermediate chain to fresh clients.
+	ca_dir="$root/etc/swanctl/x509ca"
+	rm -f "$ca_dir"/ikev2-server-chain-*.pem
+	split_dir="$(mktemp -d)"
+	index=0
+	current=
+	while IFS= read -r line; do
+		case "$line" in
+			'-----BEGIN CERTIFICATE-----')
+				index=$((index + 1))
+				current="$split_dir/cert-$index.pem"
+				;;
+		esac
+		[ -n "$current" ] && printf '%s\n' "$line" >>"$current"
+		case "$line" in
+			'-----END CERTIFICATE-----') current= ;;
+		esac
+	done <"$cert_file"
+
+	chain_index=0
+	for pem in "$split_dir"/cert-*.pem; do
+		[ -s "$pem" ] || continue
+		[ "${pem##*-}" = "1.pem" ] && continue
+		chain_index=$((chain_index + 1))
+		target="$ca_dir/ikev2-server-chain-$chain_index.pem"
+		cp "$pem" "$target.new"
+		chmod 644 "$target.new"
+		mv "$target.new" "$target"
+	done
+	rm -rf "$split_dir"
 }
 
 # ACME issuance for the inbound server certificate. The app owns the
@@ -1490,6 +1524,12 @@ case "${1:-}" in
 		[ -z "$root" ] && swanctl_quiet --load-all >/dev/null || :
 		printf 'server-ensured=1\n'
 		;;
+	server-cert-sync)
+		[ "$(getv server enabled)" = 1 ] || exit 0
+		sync_server_certificate
+		[ -z "$root" ] && swanctl_quiet --load-creds >/dev/null || :
+		printf 'server-cert-synced=1\n'
+		;;
 	advanced-mode)
 		profile_values "${2:-}"
 		getv_default "$profile_section" custom_config 0
@@ -1506,6 +1546,6 @@ case "${1:-}" in
 		advanced_reset "$2"
 		;;
 	*)
-		die 'Usage: ikev2-manager {overview|users|users-show|user-secret-set|user-delete|disconnect|disconnect-all|server-get|server-set|server-access-get|server-access-set|server-ensure|client-get|client-input|reconnect-client|ensure-client|action-status|advanced-mode|advanced-read|advanced-start|advanced-reset-start|advanced-set|advanced-reset|reload}'
+		die 'Usage: ikev2-manager {overview|users|users-show|user-secret-set|user-delete|disconnect|disconnect-all|server-get|server-set|server-access-get|server-access-set|server-ensure|server-cert-sync|client-get|client-input|reconnect-client|ensure-client|action-status|advanced-mode|advanced-read|advanced-start|advanced-reset-start|advanced-set|advanced-reset|reload}'
 		;;
 esac
