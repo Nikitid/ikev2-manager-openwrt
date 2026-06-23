@@ -5,6 +5,9 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Fixed fresh Windows IKEv2 clients rejecting valid credentials when the ACME
+  certificate used a new intermediate CA. The server now loads and sends the
+  complete certificate chain instead of only the leaf certificate.
 - Simplified the Policy Routing page by removing oversized summary cards and
   reducing the domain-routing engine to its status, explanation and mode
   switch.
