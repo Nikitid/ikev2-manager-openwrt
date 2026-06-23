@@ -1,160 +1,162 @@
-# IKEv2 Manager for OpenWrt
+# IKEv2 Manager для OpenWrt
+
+[English](README.en.md)
 
 [![CI](https://github.com/Nikitid/ikev2-manager-openwrt/actions/workflows/ci.yml/badge.svg)](https://github.com/Nikitid/ikev2-manager-openwrt/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Лицензия: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-LuCI application for an outbound IKEv2 tunnel, an optional inbound IKEv2
-server and selective IPv4 policy routing on OpenWrt.
+Приложение LuCI для исходящего IKEv2-туннеля, дополнительного входящего
+IKEv2-сервера и выборочной маршрутизации IPv4-трафика в OpenWrt.
 
-Ordinary traffic continues through the home WAN. Selected services, custom
-domains, IP addresses, networks or entire devices can use the outbound IKEv2
-gateway. If the tunnel is unavailable, selected traffic fails closed instead
-of leaking through WAN.
+Обычный трафик продолжает идти через домашний WAN. Выбранные сервисы, домены,
+IP-адреса, сети или устройства могут использовать удаленный IKEv2-шлюз. Если
+туннель недоступен, такой трафик блокируется и не уходит напрямую через WAN.
 
-The project is compatible with
-[ikev2-manager-ubuntu](https://github.com/Nikitid/ikev2-manager-ubuntu) as the
-remote gateway.
+Проект совместим с
+[ikev2-manager-ubuntu](https://github.com/Nikitid/ikev2-manager-ubuntu) в
+качестве удаленного шлюза.
 
-## Features
+## Возможности
 
-- outbound IKEv2/EAP client over an XFRM interface;
-- stable domain routing using sing-box FakeIP and nftables TProxy;
-- curated service lists plus custom domains, IPv4 addresses and CIDR networks;
-- direct-IP coverage for applications such as Telegram;
-- per-device domain, full-tunnel and direct-WAN modes;
-- fail-closed PBR with automatic tunnel and routing recovery;
-- optional inbound IKEv2/EAP server with VPN user management;
-- separate inbound access to Internet, local networks and router services;
-- optional DNS upstream management: UDP, TCP, DoT, DoH, HTTP/3, DoQ and
-  DNSCrypt;
-- ACME certificate integration;
-- Russian and English LuCI interfaces.
+- исходящий IKEv2/EAP-клиент через XFRM-интерфейс;
+- маршрутизация доменов через sing-box FakeIP и nftables TProxy;
+- встроенные списки сервисов, пользовательские домены, IPv4-адреса и CIDR;
+- маршрутизация приложений, использующих фиксированные IP-сети;
+- режимы устройств: домены через VPN, весь трафик через VPN или прямой WAN;
+- fail-closed PBR и автоматическое восстановление туннеля и маршрутов;
+- дополнительный входящий IKEv2/EAP-сервер с управлением пользователями;
+- отдельные правила доступа входящих клиентов к Интернету, локальным сетям и
+  службам роутера;
+- управление DNS upstream: UDP, TCP, DoT, DoH, HTTP/3, DoQ и DNSCrypt;
+- интеграция с ACME;
+- русский и английский интерфейсы LuCI.
 
-## Requirements
+## Требования
 
-- official OpenWrt `24.10.x`;
-- firewall4/nftables and matching official package feeds;
+- официальный OpenWrt `24.10.x`;
+- firewall4/nftables и соответствующие официальные пакеты;
 - IPv4 WAN;
-- sufficient storage for strongSwan, PBR, sing-box, `dnsmasq-full` and
-  `dnsproxy`.
+- достаточно места для strongSwan, PBR, sing-box, `dnsmasq-full` и `dnsproxy`.
 
-Vendor firmware, snapshots, firewall3 and OpenWrt 25.12+ are not supported by
-this release. The validated development device is a GL.iNet Flint 2 running
-official OpenWrt 24.10.7; compatibility is checked by capabilities rather than
-by a router whitelist.
+Vendor firmware, snapshots, firewall3 и OpenWrt 25.12+ в текущем выпуске не
+поддерживаются. Разработка проверена на GL.iNet Flint 2 с официальным OpenWrt
+24.10.7, но совместимость определяется возможностями системы, а не списком
+моделей роутеров.
 
-## Installation
+## Установка
 
-Download `luci-app-ikev2-manager_1.0.0-r6_all.ipk` from
-[Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) and upload
-it through:
+Скачайте `luci-app-ikev2-manager_1.0.0-r6_all.ipk` из
+[Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) и
+загрузите пакет через:
 
 ```text
 System -> Software -> Upload Package
 ```
 
-The IPK is passive: installing it does not start a VPN, replace DNS or enable
-PBR. Open:
+Установка IPK не запускает VPN, не заменяет DNS и не включает PBR. После
+установки откройте:
 
 ```text
 Services -> IKEv2 Manager for OpenWrt -> Overview
 ```
 
-Then:
+Затем:
 
-1. install the checked runtime dependencies;
-2. select the WAN and protected router networks;
-3. enable managed mode;
-4. configure and connect the outbound tunnel;
-5. choose services or add custom destinations under **Policy Routing**;
-6. optionally configure the inbound server, ACME and VPN users.
+1. установите проверенные runtime-зависимости;
+2. выберите WAN и защищаемые сети роутера;
+3. включите управляемый режим;
+4. настройте и подключите исходящий туннель;
+5. выберите сервисы или добавьте назначения в разделе **Policy Routing**;
+6. при необходимости настройте входящий сервер, ACME и VPN-пользователей.
 
-For CLI installation, migration, diagnostics and recovery, see
+CLI-установка, миграция, диагностика и восстановление описаны в
 [Operations](docs/OPERATIONS.md).
 
-## Support
+## Поддержка
 
-Use [GitHub Discussions](https://github.com/Nikitid/ikev2-manager-openwrt/discussions)
-for setup questions and
-[GitHub Issues](https://github.com/Nikitid/ikev2-manager-openwrt/issues) for
-reproducible bugs. Before reporting a bug, run:
+Вопросы по настройке размещайте в
+[GitHub Discussions](https://github.com/Nikitid/ikev2-manager-openwrt/discussions),
+а воспроизводимые ошибки — в
+[GitHub Issues](https://github.com/Nikitid/ikev2-manager-openwrt/issues).
+Перед отчетом об ошибке выполните:
 
 ```sh
 /usr/libexec/ikev2-manager-system doctor
 /usr/libexec/ikev2-manager overview
 ```
 
-Remove public IPs, private domains, usernames and credentials from output.
-Never attach a router backup or files from `/etc/ikev2-manager/` and
-`/etc/swanctl/private/`.
+Удалите из вывода публичные IP-адреса, приватные домены, имена пользователей и
+учетные данные. Не прикладывайте резервную копию роутера и файлы из
+`/etc/ikev2-manager/` или `/etc/swanctl/private/`.
 
-## Policy routing
+## Маршрутизация
 
-Reliable mode keeps `dnsmasq-full` as the client resolver and sends public DNS
-queries through sing-box. Selected domain suffixes receive persistent FakeIP
-addresses from `198.18.0.0/15`; nftables intercepts only those destinations.
-sing-box sends covered sources through `ipsec-out`, while unrelated traffic
-never enters the proxy path.
+Надежный режим оставляет `dnsmasq-full` клиентским резолвером и отправляет
+публичные DNS-запросы через sing-box. Выбранные доменные суффиксы получают
+постоянные FakeIP-адреса из `198.18.0.0/15`; nftables перехватывает только эти
+назначения. sing-box отправляет подходящие источники через `ipsec-out`, не
+затрагивая остальной трафик.
 
-Services that connect directly to fixed networks can also ship validated CIDR
-targets. Administrators can add:
+Сервисы с фиксированными сетями могут содержать проверенные CIDR. Также можно
+добавить:
 
-- **Custom domains** — one domain suffix per line;
-- **Custom IP addresses and networks** — one IPv4 address or CIDR per line;
-- **Device rules** — domain routing, full tunnel or direct WAN.
+- пользовательские домены — один суффикс в строке;
+- пользовательские IPv4-адреса и сети — один адрес или CIDR в строке;
+- правила устройств — доменная маршрутизация, полный туннель или прямой WAN.
 
-All generated lists are assembled in temporary files and replaced only after
-validation. Failed downloads or invalid custom entries leave the previous
-working policy active. The health service repairs missing FakeIP and direct-IP
-routing state without restarting WAN.
+Списки собираются во временных файлах и заменяются только после проверки.
+Ошибки загрузки или неверные пользовательские записи не повреждают предыдущую
+рабочую конфигурацию. Служба здоровья восстанавливает FakeIP и direct-IP
+маршрутизацию без перезапуска WAN.
 
-Clients must use router DNS for domain classification. Browser DoH, Android
-Private DNS and Apple Private Relay can bypass it. Direct IP/CIDR policies do
-not depend on DNS.
+Для классификации доменов клиенты должны использовать DNS роутера. Browser
+DoH, Android Private DNS и Apple Private Relay могут обходить классификацию.
+Политики прямых IP/CIDR от DNS не зависят.
 
-## Domain-list sources
+## Источники списков доменов
 
-Small project-maintained lists are included under
-`luci-ikev2-domains/local-services/`. Optional lists are downloaded at runtime
-from [`itdoginfo/allow-domains`](https://github.com/itdoginfo/allow-domains),
-validated, cached and never bundled into this repository or its IPK.
+Небольшие списки проекта находятся в
+`luci-ikev2-domains/local-services/`. Дополнительные списки загружаются во
+время работы из
+[`itdoginfo/allow-domains`](https://github.com/itdoginfo/allow-domains),
+проверяются, кэшируются и не включаются в репозиторий или IPK.
 
-The upstream repository did not publish a license when this integration was
-added, so downloaded content is not covered by this project's MIT License.
-See [NOTICE](NOTICE).
+На момент интеграции upstream-репозиторий не публиковал лицензию, поэтому
+загружаемые данные не покрываются MIT-лицензией этого проекта. См.
+[NOTICE](NOTICE).
 
-## Safety
+## Безопасность
 
-- a fresh installation is inactive;
-- unsupported firmware and missing kernel packages are rejected before setup;
-- selected traffic uses an unreachable fallback route when IKEv2 is down;
-- DNS, routing and service-list updates have validation and rollback;
-- long LuCI actions are serialized and report their actual status;
-- submitted VPN and ACME secrets use permission-restricted temporary files;
-- backups contain credentials and private keys and must be stored as secrets.
+- новая установка неактивна;
+- неподдерживаемая прошивка и отсутствующие kernel-пакеты отклоняются до
+  настройки;
+- выбранный трафик получает недоступный резервный маршрут при отключении IKEv2;
+- обновления DNS, маршрутов и списков используют проверку и откат;
+- длительные действия LuCI сериализованы и показывают фактический результат;
+- VPN- и ACME-секреты передаются через временные файлы с ограниченными правами;
+- резервные копии содержат учетные данные и закрытые ключи.
 
-## Build
+## Сборка
 
-The canonical macOS/Linux validation and build command is:
+Основная команда проверки и сборки для macOS и Linux:
 
 ```sh
 ./scripts/ci-check.sh
 ```
 
-It checks versions, the public tree, shell and JavaScript syntax, JSON,
-runtime modules, domain/CIDR transactions and deterministic IPK output.
-Artifacts are written to `dist/`.
+Она проверяет версии, публичное дерево, синтаксис shell и JavaScript, JSON,
+runtime-модули, операции со списками доменов/CIDR и воспроизводимость IPK.
+Артефакты записываются в `dist/`.
 
-## Documentation
+## Документация
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Operations](docs/OPERATIONS.md)
-- [Security](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
+- [Архитектура](docs/ARCHITECTURE.md)
+- [Эксплуатация](docs/OPERATIONS.md)
+- [Безопасность](SECURITY.md)
+- [Участие в разработке](CONTRIBUTING.md)
+- [Журнал изменений](CHANGELOG.md)
 
-## License
+## Лицензия
 
-Project source and project-maintained lists are available under the
-[MIT License](LICENSE). Optional downloaded lists are described in
-[NOTICE](NOTICE).
+Исходный код и списки проекта доступны по [лицензии MIT](LICENSE).
+Дополнительные загружаемые списки описаны в [NOTICE](NOTICE).
