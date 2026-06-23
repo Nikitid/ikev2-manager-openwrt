@@ -5,6 +5,8 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Added a Russian primary README and retained the English documentation as a
+  separate language version.
 - Fixed fresh Windows IKEv2 clients rejecting valid credentials when the ACME
   certificate used a new intermediate CA. The server now loads and sends the
   complete certificate chain instead of only the leaf certificate.
