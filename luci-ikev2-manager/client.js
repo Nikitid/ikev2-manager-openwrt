@@ -76,13 +76,18 @@ var dnsProviders = [
 		bootstrap: '76.76.2.0:53 76.76.10.0:53'
 	},
 	{
-		id: 'alidns', label: 'AliDNS',
-		udp: 'udp://223.5.5.5:53 udp://223.6.6.6:53',
-		tcp: 'tcp://223.5.5.5:53 tcp://223.6.6.6:53',
-		dot: 'tls://dns.alidns.com',
-		doh: 'https://dns.alidns.com/dns-query',
-		doq: 'quic://dns.alidns.com:853',
-		bootstrap: '223.5.5.5:53 223.6.6.6:53'
+		id: 'mullvad', label: 'Mullvad DNS',
+		dot: 'tls://dns.mullvad.net',
+		doh: 'https://dns.mullvad.net/dns-query',
+		bootstrap: '194.242.2.2:53'
+	},
+	{
+		id: 'yandex', label: 'Yandex DNS',
+		udp: 'udp://77.88.8.8:53 udp://77.88.8.1:53',
+		tcp: 'tcp://77.88.8.8:53 tcp://77.88.8.1:53',
+		dot: 'tls://common.dot.dns.yandex.net',
+		doh: 'https://common.dot.dns.yandex.net/dns-query',
+		bootstrap: '77.88.8.8:53 77.88.8.1:53'
 	}
 ];
 
@@ -93,6 +98,74 @@ function input(type, value, attrs) {
 		'value': type === 'checkbox' ? null : (value || ''),
 		'checked': type === 'checkbox' && value === '1' ? '' : null
 	}, attrs || {}));
+}
+
+function splitDnsList(value) {
+	return (value || '').trim().split(/\s+/).filter(Boolean);
+}
+
+function dnsEndpointEditor(value, placeholder, addLabel, emptyLabel) {
+	var list = E('div', { 'class': 'ikev2-dns-endpoints' });
+	var add = E('button', {
+		'class': 'cbi-button cbi-button-action',
+		'type': 'button'
+	}, [ addLabel ]);
+
+	function values() {
+		return Array.prototype.map.call(
+			list.querySelectorAll('input[type="text"]'),
+			function(field) { return field.value.trim(); }
+		).filter(Boolean);
+	}
+
+	function render(items) {
+		list.replaceChildren();
+		if (!items.length)
+			list.appendChild(E('div', { 'class': 'ikev2-dns-empty' }, [ emptyLabel ]));
+		items.forEach(function(item) {
+			var field = input('text', item, { 'placeholder': placeholder });
+			var remove = E('button', {
+				'class': 'cbi-button cbi-button-remove',
+				'type': 'button',
+				'title': _('Remove'),
+				'aria-label': _('Remove')
+			}, [ '×' ]);
+			remove.addEventListener('click', function() {
+				field.parentNode.remove();
+				if (!list.querySelector('.ikev2-dns-endpoint'))
+					render([]);
+			});
+			list.appendChild(E('div', { 'class': 'ikev2-dns-endpoint' }, [ field, remove ]));
+		});
+	}
+
+	function append(items) {
+		var next = values();
+		splitDnsList(items).forEach(function(item) {
+			if (next.indexOf(item) < 0)
+				next.push(item);
+		});
+		render(next);
+	}
+
+	add.addEventListener('click', function() {
+		var next = values();
+		next.push('');
+		render(next);
+		var fields = list.querySelectorAll('input[type="text"]');
+		if (fields.length)
+			fields[fields.length - 1].focus();
+	});
+
+	render(splitDnsList(value));
+	return {
+		node: E('div', { 'class': 'ikev2-dns-editor' }, [
+			list,
+			E('div', { 'class': 'ikev2-dns-editor-actions' }, [ add ])
+		]),
+		values: values,
+		append: append
+	};
 }
 
 function findOutbound(sas) {
@@ -313,46 +386,62 @@ return view.extend({
 				}, [ _(item.label) ]);
 			}));
 		var dnsProvider = E('select', { 'class': 'cbi-input-select' });
-		var dnsUpstream = E('textarea', {
-			'class': 'ikev2-domain-editor',
-			'style': 'min-height:4.4rem',
-			'placeholder': 'https://dns.example/dns-query'
-		}, [ dnsValue.upstream || dnsValue.current_upstream || '' ]);
-		var dnsBootstrap = input('text',
-			dnsValue.bootstrap || dnsValue.current_bootstrap || '1.1.1.1:53 1.0.0.1:53', {
-				'placeholder': '1.1.1.1:53 1.0.0.1:53'
-			});
-		var dnsFallback = input('text',
-			dnsValue.fallback || dnsValue.current_fallback || '', {
-				'placeholder': _('Optional; use the same protocol')
-			});
+		var dnsAddProvider = E('button', {
+			'class': 'cbi-button cbi-button-action',
+			'type': 'button'
+		}, [ _('Add preset') ]);
+		var initialMode = dnsValue.upstream_mode || dnsValue.current_upstream_mode ||
+			'load_balance';
+		var dnsUpstreamMode = E('select', { 'class': 'cbi-input-select' }, [
+			E('option', {
+				'value': 'load_balance',
+				'selected': initialMode === 'load_balance' ? '' : null
+			}, [ _('Load balance') ]),
+			E('option', {
+				'value': 'parallel',
+				'selected': initialMode === 'parallel' ? '' : null
+			}, [ _('First response') ]),
+			E('option', {
+				'value': 'fastest_addr',
+				'selected': initialMode === 'fastest_addr' ? '' : null
+			}, [ _('Fastest address') ])
+		]);
+		var endpointPlaceholder = 'https://dns.example/dns-query';
+		var dnsUpstream = dnsEndpointEditor(
+			dnsValue.upstream || dnsValue.current_upstream || '',
+			endpointPlaceholder, _('Add DNS server'), _('No DNS servers added'));
+		var dnsBootstrap = dnsEndpointEditor(
+			dnsValue.bootstrap || dnsValue.current_bootstrap ||
+				'1.1.1.1:53 1.0.0.1:53',
+			'1.1.1.1:53', _('Add bootstrap server'), _('No bootstrap servers added'));
+		var dnsFallback = dnsEndpointEditor(
+			dnsValue.fallback || dnsValue.current_fallback || '',
+			endpointPlaceholder, _('Add fallback server'), _('No fallback servers added'));
 		var dnsResult = common.inlineResult();
 		var dnsSave = E('button', {
 			'class': 'cbi-button cbi-button-apply',
 			'type': 'button'
 		}, [ _('Apply DNS') ]);
+		var dnsPresetPicker = E('div', { 'class': 'ikev2-dns-preset-picker' }, [
+			dnsProvider,
+			dnsAddProvider
+		]);
 		var dnsRows = E('div', { 'class': 'ikev2-form-grid' }, [
 			common.fieldLabel(_('Protocol'),
 				_('dnsproxy supports plain DNS, DoT, DoH, HTTP/3, DoQ and DNSCrypt.')),
 			dnsProtocol,
-			common.fieldLabel(_('Provider')),
-			dnsProvider,
-			common.fieldLabel(_('Upstream endpoints'),
-				_('Space-separated dnsproxy upstream URLs. Select Custom to edit them manually.')),
-			dnsUpstream
+			common.fieldLabel(_('Add provider preset')),
+			dnsPresetPicker,
+			common.fieldLabel(_('Query strategy')),
+			dnsUpstreamMode,
+			common.fieldLabel(_('Primary DNS servers')),
+			dnsUpstream.node,
+			common.fieldLabel(_('Bootstrap DNS')),
+			dnsBootstrap.node,
+			common.fieldLabel(_('Fallback DNS servers')),
+			dnsFallback.node
 		]);
-		var dnsAdvanced = E('details', { 'class': 'ikev2-advanced' }, [
-			E('summary', {}, [ _('Bootstrap and fallback') ]),
-			E('div', { 'class': 'ikev2-form-grid' }, [
-				common.fieldLabel(_('Bootstrap DNS'),
-					_('Plain IPv4 resolvers used only to locate encrypted DNS hostnames.')),
-				dnsBootstrap,
-				common.fieldLabel(_('Fallback endpoints'),
-					_('Optional endpoints used when the primary resolver is unavailable.')),
-				dnsFallback
-			])
-		]);
-		var dnsManagedRows = E('div', {}, [ dnsRows, dnsAdvanced ]);
+		var dnsManagedRows = E('div', { 'class': 'ikev2-dns-managed' }, [ dnsRows ]);
 
 		function presetFor(protocol, provider) {
 			for (var i = 0; i < dnsProviders.length; i++)
@@ -361,7 +450,7 @@ return view.extend({
 			return null;
 		}
 
-		function rebuildDnsProviders(preferred, updateEndpoint) {
+		function rebuildDnsProviders(preferred) {
 			while (dnsProvider.firstChild)
 				dnsProvider.removeChild(dnsProvider.firstChild);
 			dnsProviders.forEach(function(provider) {
@@ -372,54 +461,37 @@ return view.extend({
 					'selected': provider.id === preferred ? '' : null
 				}, [ provider.label ]));
 			});
-			dnsProvider.appendChild(E('option', {
-				'value': 'custom',
-				'selected': preferred === 'custom' ? '' : null
-			}, [ _('Custom') ]));
 			if (!dnsProvider.value)
 				dnsProvider.value = dnsProvider.options[0].value;
-			if (updateEndpoint) {
-				var preset = presetFor(dnsProtocol.value, dnsProvider.value);
-				if (preset) {
-					dnsUpstream.value = preset[dnsProtocol.value];
-					dnsBootstrap.value = preset.bootstrap || dnsBootstrap.value;
-					dnsFallback.value = '';
-				}
-			}
 		}
 
 		function syncDnsVisibility() {
 			dnsManagedRows.style.display = dnsManaged.value === '1' ? '' : 'none';
 		}
 
-		rebuildDnsProviders(dnsValue.provider || 'cloudflare', false);
-		if (!presetFor(dnsProtocol.value, dnsProvider.value))
-			dnsProvider.value = 'custom';
+		rebuildDnsProviders(dnsValue.provider || 'cloudflare');
 		syncDnsVisibility();
 		dnsManaged.addEventListener('change', syncDnsVisibility);
 		dnsProtocol.addEventListener('change', function() {
-			rebuildDnsProviders(dnsProvider.value, true);
+			rebuildDnsProviders(dnsProvider.value);
 		});
-		dnsProvider.addEventListener('change', function() {
+		dnsAddProvider.addEventListener('click', function() {
 			var preset = presetFor(dnsProtocol.value, dnsProvider.value);
 			if (!preset)
 				return;
-			dnsUpstream.value = preset[dnsProtocol.value];
-			dnsBootstrap.value = preset.bootstrap || dnsBootstrap.value;
-			dnsFallback.value = '';
+			dnsUpstream.append(preset[dnsProtocol.value]);
+			dnsBootstrap.append(preset.bootstrap || '');
 		});
 
 		dnsSave.addEventListener('click', function() {
-			var normalize = function(text) {
-				return (text || '').trim().split(/\s+/).filter(Boolean).join(' ');
-			};
 			var payload = [
 				dnsManaged.value,
 				dnsProtocol.value,
 				dnsProvider.value,
-				normalize(dnsUpstream.value),
-				normalize(dnsBootstrap.value),
-				normalize(dnsFallback.value)
+				dnsUpstreamMode.value,
+				dnsUpstream.values().join(' '),
+				dnsBootstrap.values().join(' '),
+				dnsFallback.values().join(' ')
 			].join('\n') + '\n';
 			return common.runAction({
 				button: dnsSave,

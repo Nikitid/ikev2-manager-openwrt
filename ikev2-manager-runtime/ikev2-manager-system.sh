@@ -890,6 +890,7 @@ ensure_dns_section() {
 	uci set "$config.dns.managed=0"
 	uci set "$config.dns.protocol=doh"
 	uci set "$config.dns.provider=cloudflare"
+	uci set "$config.dns.upstream_mode=load_balance"
 	uci set "$config.dns.upstream=https://dns.cloudflare.com/dns-query"
 	uci set "$config.dns.bootstrap=1.1.1.1:53 1.0.0.1:53"
 	uci set "$config.dns.fallback="
@@ -934,6 +935,20 @@ valid_dns_endpoint_list() {
 	[ -n "$value" ] || return 1
 	for endpoint in $value; do
 		valid_dns_endpoint "$protocol" "$endpoint" || return 1
+	done
+}
+
+valid_dns_endpoint_any() {
+	endpoint="$1"
+	protocol="$(dns_protocol_for_upstream "$endpoint")"
+	[ "$protocol" != unknown ] && valid_dns_endpoint "$protocol" "$endpoint"
+}
+
+valid_dns_endpoint_list_any() {
+	value="$(normalize_list "$1")"
+	[ -n "$value" ] || return 1
+	for endpoint in $value; do
+		valid_dns_endpoint_any "$endpoint" || return 1
 	done
 }
 
@@ -1047,12 +1062,15 @@ dns_show() {
 	managed="$(defaultv dns managed 0)"
 	protocol="$(defaultv dns protocol doh)"
 	provider="$(defaultv dns provider cloudflare)"
+	upstream_mode="$(defaultv dns upstream_mode load_balance)"
 	upstream="$(getv dns upstream)"
 	bootstrap="$(getv dns bootstrap)"
 	fallback="$(getv dns fallback)"
 	current_upstream="$(uci -q get dnsproxy.servers.upstream 2>/dev/null || true)"
 	current_bootstrap="$(uci -q get dnsproxy.servers.bootstrap 2>/dev/null || true)"
 	current_fallback="$(uci -q get dnsproxy.servers.fallback 2>/dev/null || true)"
+	current_upstream_mode="$(uci -q get dnsproxy.global.upstream_mode 2>/dev/null || true)"
+	[ -n "$current_upstream_mode" ] || current_upstream_mode=load_balance
 	current_protocol='unknown'
 	for endpoint in $current_upstream; do
 		current_protocol="$(dns_protocol_for_upstream "$endpoint")"
@@ -1061,6 +1079,7 @@ dns_show() {
 	printf 'managed=%s\n' "$managed"
 	printf 'protocol=%s\n' "$protocol"
 	printf 'provider=%s\n' "$provider"
+	printf 'upstream_mode=%s\n' "$upstream_mode"
 	printf 'upstream=%s\n' "$upstream"
 	printf 'bootstrap=%s\n' "$bootstrap"
 	printf 'fallback=%s\n' "$fallback"
@@ -1068,6 +1087,7 @@ dns_show() {
 	printf 'current_upstream=%s\n' "$current_upstream"
 	printf 'current_bootstrap=%s\n' "$current_bootstrap"
 	printf 'current_fallback=%s\n' "$current_fallback"
+	printf 'current_upstream_mode=%s\n' "$current_upstream_mode"
 	if /etc/init.d/dnsproxy running 2>/dev/null; then
 		printf 'running=1\n'
 	else
@@ -1079,10 +1099,12 @@ dns_apply() {
 	ensure_dns_section
 	managed="$1"
 	protocol="$2"
+	selected_protocol="$protocol"
 	provider="$3"
-	upstream="$(normalize_list "$4")"
-	bootstrap="$(normalize_list "$5")"
-	fallback="$(normalize_list "$6")"
+	upstream_mode="$4"
+	upstream="$(normalize_list "$5")"
+	bootstrap="$(normalize_list "$6")"
+	fallback="$(normalize_list "$7")"
 	[ "$managed" = 0 ] || [ "$managed" = 1 ] || die 'Invalid DNS management mode'
 	valid_name "$provider" || die 'Invalid DNS provider'
 	fakeip_active=0
@@ -1105,17 +1127,21 @@ dns_apply() {
 		return 0
 	fi
 
-	case "$protocol" in
+	case "$selected_protocol" in
 		udp | tcp | dot | doh | doh3 | h3 | doq | dnscrypt) ;;
 		*) die 'Unsupported DNS protocol' ;;
 	esac
-	valid_dns_endpoint_list "$protocol" "$upstream" ||
+	case "$upstream_mode" in
+		load_balance | parallel | fastest_addr) ;;
+		*) die 'Unsupported DNS upstream mode' ;;
+	esac
+	valid_dns_endpoint_list "$selected_protocol" "$upstream" ||
 		die 'Invalid DNS upstream for the selected protocol'
 	valid_dns_bootstrap_list "$bootstrap" ||
 		die 'Bootstrap DNS must contain IPv4:port entries'
 	if [ -n "$fallback" ]; then
-		valid_dns_endpoint_list "$protocol" "$fallback" ||
-			die 'Fallback DNS must use the selected protocol'
+		valid_dns_endpoint_list_any "$fallback" ||
+			die 'Invalid fallback DNS endpoint'
 	fi
 	command -v dnsproxy >/dev/null 2>&1 || die 'dnsproxy is not installed'
 
@@ -1132,9 +1158,10 @@ dns_apply() {
 	uci -q get dnsproxy.cache >/dev/null 2>&1 ||
 		uci set dnsproxy.cache=cache
 	uci set dnsproxy.global.enabled='1'
-	uci set dnsproxy.global.http3="$([ "$protocol" = doh3 ] && echo 1 || echo 0)"
+	uci set dnsproxy.global.http3="$([ "$selected_protocol" = doh3 ] && echo 1 || echo 0)"
 	uci set dnsproxy.global.insecure='0'
 	uci set dnsproxy.global.timeout="$(defaultv dns timeout 10s)"
+	uci set dnsproxy.global.upstream_mode="$upstream_mode"
 	set_uci_list dnsproxy global listen_addr '127.0.0.1'
 	set_uci_list dnsproxy global listen_port '5453'
 	set_uci_list dnsproxy servers upstream "$upstream"
@@ -1156,8 +1183,9 @@ dns_apply() {
 	fi
 
 	uci set "$config.dns.managed=1"
-	uci set "$config.dns.protocol=$protocol"
+	uci set "$config.dns.protocol=$selected_protocol"
 	uci set "$config.dns.provider=$provider"
+	uci set "$config.dns.upstream_mode=$upstream_mode"
 	uci set "$config.dns.upstream=$upstream"
 	uci set "$config.dns.bootstrap=$bootstrap"
 	uci set "$config.dns.fallback=$fallback"
@@ -1188,12 +1216,13 @@ dns_set_async() {
 		IFS= read -r managed
 		IFS= read -r protocol
 		IFS= read -r provider
+		IFS= read -r upstream_mode
 		IFS= read -r upstream
 		IFS= read -r bootstrap
 		IFS= read -r fallback || true
 	} <"$dns_input_file"
 	rm -f "$dns_input_file"
-	start_action dns-set "$managed" "$protocol" "$provider" \
+	start_action dns-set "$managed" "$protocol" "$provider" "$upstream_mode" \
 		"$upstream" "$bootstrap" "$fallback"
 }
 

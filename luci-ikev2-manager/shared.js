@@ -481,16 +481,21 @@ var ru = {
 	'DNS over QUIC (DoQ) — experimental': 'DNS через QUIC (DoQ) — экспериментально',
 	'DNSCrypt': 'DNSCrypt',
 	'dnsproxy supports plain DNS, DoT, DoH, HTTP/3, DoQ and DNSCrypt.': 'dnsproxy поддерживает обычный DNS, DoT, DoH, HTTP/3, DoQ и DNSCrypt.',
-	'Provider': 'Провайдер',
-	'Custom': 'Вручную',
-	'Upstream endpoints': 'Адреса upstream',
-	'Space-separated dnsproxy upstream URLs. Select Custom to edit them manually.': 'Адреса upstream для dnsproxy через пробел. Для ручного ввода выберите «Вручную».',
-	'Bootstrap and fallback': 'Bootstrap и резерв',
+	'Add provider preset': 'Добавить готовый сервер',
+	'Add preset': 'Добавить',
+	'Query strategy': 'Стратегия запросов',
+	'Load balance': 'Распределять запросы',
+	'First response': 'Первый ответ',
+	'Fastest address': 'Самый быстрый адрес',
+	'Primary DNS servers': 'Основные DNS-серверы',
+	'Add DNS server': 'Добавить DNS-сервер',
+	'No DNS servers added': 'DNS-серверы не добавлены',
 	'Bootstrap DNS': 'Bootstrap DNS',
-	'Plain IPv4 resolvers used only to locate encrypted DNS hostnames.': 'Обычные IPv4-резолверы, используемые только для поиска адресов зашифрованного DNS.',
-	'Fallback endpoints': 'Резервные адреса',
-	'Optional endpoints used when the primary resolver is unavailable.': 'Необязательные адреса на случай недоступности основного резолвера.',
-	'Optional; use the same protocol': 'Необязательно; используйте тот же протокол',
+	'Add bootstrap server': 'Добавить bootstrap-сервер',
+	'No bootstrap servers added': 'Bootstrap-серверы не добавлены',
+	'Fallback DNS servers': 'Резервные DNS-серверы',
+	'Add fallback server': 'Добавить резервный сервер',
+	'No fallback servers added': 'Резервные DNS-серверы не добавлены',
 	'Apply DNS': 'Применить DNS',
 	'Applying and testing DNS...': 'Применяю и проверяю DNS...',
 	'Applying and testing DNS settings...': 'Применяю и проверяю настройки DNS...',
@@ -1253,6 +1258,48 @@ function styles() {
 			.ikev2-form-grid-compact input[type="number"],
 			.ikev2-form-grid-compact select,
 			.ikev2-form-grid-compact textarea { max-width: none; }
+			.ikev2-dns-managed { margin-top: 1rem; }
+			.ikev2-dns-preset-picker {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) auto;
+				gap: .55rem;
+				max-width: 34rem;
+			}
+			.ikev2-dns-preset-picker select { max-width: none; }
+			.ikev2-dns-editor {
+				display: grid;
+				gap: .55rem;
+				width: 100%;
+				max-width: 34rem;
+			}
+			.ikev2-dns-endpoints { display: grid; gap: .45rem; }
+			.ikev2-dns-endpoint {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) 2.35rem;
+				gap: .45rem;
+				align-items: center;
+			}
+			.ikev2-dns-endpoint input[type="text"] {
+				width: 100%;
+				max-width: none;
+				font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+				font-size: .85rem;
+			}
+			.ikev2-dns-endpoint .cbi-button {
+				min-width: 2.35rem;
+				padding-inline: .55rem;
+			}
+			.ikev2-dns-empty {
+				padding: .58rem .7rem;
+				border: 1px dashed var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				color: var(--ikev2-muted);
+				font-size: .84rem;
+			}
+			.ikev2-dns-editor-actions {
+				display: flex;
+				justify-content: flex-start;
+			}
 			.ikev2-page input:focus,
 			.ikev2-page select:focus,
 			.ikev2-page textarea:focus {
@@ -1804,6 +1851,8 @@ function styles() {
 				.ikev2-engine-head { align-items: stretch; flex-direction: column; }
 				.ikev2-engine-action { justify-content: flex-start; }
 				.ikev2-engine-action .cbi-button { width: 100%; min-width: 0; }
+				.ikev2-dns-preset-picker { grid-template-columns: 1fr; }
+				.ikev2-dns-preset-picker .cbi-button { width: 100%; }
 			}
 	` ]);
 }

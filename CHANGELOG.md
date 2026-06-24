@@ -5,6 +5,10 @@ the OpenWrt package release suffix (`-rN`) for packaging revisions.
 
 ## Unreleased
 
+- Reworked the outbound DNS editor around addable primary, bootstrap and
+  fallback resolver rows, provider presets and native dnsproxy upstream modes.
+- Added Mullvad and Yandex resolver presets and allowed fallback resolvers to
+  use a transport different from the primary group.
 - Added a Russian primary README and retained the English documentation as a
   separate language version.
 - Fixed fresh Windows IKEv2 clients rejecting valid credentials when the ACME
