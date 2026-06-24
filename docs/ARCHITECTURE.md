@@ -55,7 +55,9 @@ survive service restarts and boots. Non-selected queries receive ordinary
 public IPv4 answers.
 
 Managed DNS is optional. `dnsproxy` supports UDP, TCP, DoT, DoH, HTTP/3, DoQ
-and DNSCrypt. Standard DoH is the conservative default; HTTP/3 and DoQ remain
+and DNSCrypt. Multiple primary resolvers can use load balancing, parallel
+queries or fastest-address selection. Bootstrap and fallback resolvers are
+managed independently. Standard DoH is the default; HTTP/3 and DoQ remain
 experimental. Resolver changes are validated and rolled back on failure.
 
 ## Destination lifecycle

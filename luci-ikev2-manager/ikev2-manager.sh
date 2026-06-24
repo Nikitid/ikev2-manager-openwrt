@@ -333,6 +333,7 @@ init_uci() {
 		uci set "$uci_config.dns.managed=0"
 		uci set "$uci_config.dns.protocol=doh"
 		uci set "$uci_config.dns.provider=cloudflare"
+		uci set "$uci_config.dns.upstream_mode=load_balance"
 		uci set "$uci_config.dns.upstream=https://dns.cloudflare.com/dns-query"
 		uci set "$uci_config.dns.bootstrap=1.1.1.1:53 1.0.0.1:53"
 		uci set "$uci_config.dns.fallback="

@@ -21,6 +21,10 @@ explicitly requested.
 
 - Keep changes scoped and consistent with existing shell, JavaScript, LuCI,
   OpenWrt, and packaging conventions.
+- Before changing UI, inspect adjacent project tabs, pages, and components.
+  Match existing UX/UI patterns for structure, spacing, button order, text,
+  form behavior, validation errors, and save/apply/cancel flows. Do not
+  introduce a new design or UX pattern unless explicitly requested.
 - Use repository checks and build scripts rather than ad hoc substitutes.
 - Run narrow checks while iterating and the broadest relevant check before
   completion. Update documentation and the changelog when behavior,
@@ -34,6 +38,8 @@ explicitly requested.
 - The standing rule is: do not reboot the router and do not restart WAN.
 - Preserve the active management path. Avoid disruptive changes to routing,
   VPN, firewall, Wi-Fi, SSH, and management interfaces.
+- Deploy project changes to the target host or router for testing without
+  waiting for additional approval.
 - Deploy with the repository build/check workflow, copy IPKs with `scp -O`
   where required, install with `opkg`, and verify the installed package
   version and preserved configuration.
