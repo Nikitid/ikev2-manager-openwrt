@@ -112,7 +112,12 @@ Recovery sequence:
 5. verify one selected and one ordinary destination;
 6. enable the inbound server only after certificate validation.
 
-Removing the package should also begin by disabling managed mode:
+Removing the package disables managed mode first and removes generated runtime
+state, including rendered strongSwan profiles and copied certificate material.
+Package-owned files are removed by `opkg`; user configuration, credentials,
+source certificates, custom destination lists, cached service lists and
+sysupgrade backups are preserved. If managed mode is still enabled and cleanup
+cannot run, package removal stops before files are changed.
 
 ```sh
 opkg remove luci-app-ikev2-manager

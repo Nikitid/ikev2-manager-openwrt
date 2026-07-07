@@ -43,7 +43,12 @@ if grep -Eq '^Version:[[:space:]]*[0-9]' "$root/scripts/stage-package.sh"; then
 fi
 
 if [ "$fail" -eq 0 ]; then
-	printf 'check-version-sync OK: %s %s-r%s %s\n' \
-		"$PKG_NAME" "$PKG_VERSION" "$PKG_RELEASE" "$PKG_ARCH"
+	if [ -n "${PKG_RELEASE:-}" ]; then
+		version="$PKG_VERSION-r$PKG_RELEASE"
+	else
+		version="$PKG_VERSION"
+	fi
+	printf 'check-version-sync OK: %s %s %s\n' \
+		"$PKG_NAME" "$version" "$PKG_ARCH"
 fi
 exit "$fail"

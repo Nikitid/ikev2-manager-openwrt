@@ -45,7 +45,7 @@ Vendor firmware, snapshots, firewall3 и OpenWrt 25.12+ в текущем вып
 
 ## Установка
 
-Скачайте `luci-app-ikev2-manager_1.0.0-r6_all.ipk` из
+Скачайте `luci-app-ikev2-manager_1.0.1_all.ipk` из
 [Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) и
 загрузите пакет через:
 

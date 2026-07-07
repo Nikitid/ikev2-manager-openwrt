@@ -47,7 +47,7 @@ by a router whitelist.
 
 ## Installation
 
-Download `luci-app-ikev2-manager_1.0.0-r6_all.ipk` from
+Download `luci-app-ikev2-manager_1.0.1_all.ipk` from
 [Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) and upload
 it through:
 

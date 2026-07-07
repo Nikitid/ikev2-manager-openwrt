@@ -28,14 +28,14 @@ Describe:
 
 Use documentation addresses and names only. Sanitize screenshots and logs.
 
-Release tags use `v<version>-r<package-release>`, for example `v1.0.0-r1`,
-and must match `release.env`.
+Release tags use `v<version>`, for example `v1.0.1`, and must match
+`release.env`.
 
 Before a public release:
 
 ```sh
 ./scripts/ci-check.sh
-./scripts/check-release-tag.sh v1.0.0-r6
+./scripts/check-release-tag.sh v1.0.1
 git status --short
 ```
 
