@@ -5,7 +5,11 @@ set -eu
 root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 . "$root/release.env"
 
-expected="v${PKG_VERSION}-r${PKG_RELEASE}"
+if [ -n "${PKG_RELEASE:-}" ]; then
+	expected="v${PKG_VERSION}-r${PKG_RELEASE}"
+else
+	expected="v${PKG_VERSION}"
+fi
 actual="${1:-${GITHUB_REF_NAME:-}}"
 
 [ -n "$actual" ] || {

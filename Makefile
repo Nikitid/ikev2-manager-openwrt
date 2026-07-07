@@ -5,8 +5,8 @@ PKG_NAME:=luci-app-ikev2-manager
 # canonical build (scripts/build-ipk.sh). These SDK literals are kept in sync
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
-PKG_VERSION:=1.0.0
-PKG_RELEASE:=6
+PKG_VERSION:=1.0.1
+PKG_RELEASE:=
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
 PKGARCH:=all
@@ -45,35 +45,39 @@ endef
 define Package/luci-app-ikev2-manager/preinst
 #!/bin/sh
 set -eu
+fail() {
+	echo "IKEv2 Manager for OpenWrt: $$*" >&2
+	exit 1
+}
 [ -n "$${IPKG_INSTROOT:-}" ] && exit 0
-[ -r /etc/openwrt_release ] || {
-	echo "IKEv2 Manager for OpenWrt: OpenWrt is required" >&2
-	exit 1
-}
+[ -r /etc/openwrt_release ] || fail "OpenWrt is required"
 . /etc/openwrt_release
-[ "$${DISTRIB_ID:-}" = OpenWrt ] || {
-	echo "IKEv2 Manager for OpenWrt: official OpenWrt is required" >&2
-	exit 1
-}
+[ "$${DISTRIB_ID:-}" = OpenWrt ] ||
+	fail "official OpenWrt is required; found $${DISTRIB_ID:-unknown vendor firmware}"
 case "$${DISTRIB_RELEASE:-}" in
 	24.10.*) ;;
 	25.12.*)
-		echo "IKEv2 Manager for OpenWrt: OpenWrt 25.12/apk is not supported yet" >&2
-		exit 1
+		fail "OpenWrt 25.12 uses apk and is not supported by this opkg release"
 		;;
 	*)
-		echo "IKEv2 Manager for OpenWrt: OpenWrt 24.10.x is required" >&2
-		exit 1
+		fail "OpenWrt 24.10.x is required; found $${DISTRIB_RELEASE:-unknown}"
 		;;
 esac
+for command in opkg uci ubus fw4; do
+	command -v "$$command" >/dev/null 2>&1 ||
+		fail "required base command is missing: $$command"
+done
 grep -qE 'downloads\.openwrt\.org/releases/24\.10\.' /etc/opkg/distfeeds.conf 2>/dev/null || {
-	echo "IKEv2 Manager for OpenWrt: official OpenWrt 24.10 release feeds are required" >&2
-	exit 1
+	fail "official OpenWrt 24.10 release package feeds are required"
 }
 opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' && {
-	echo "IKEv2 Manager for OpenWrt: migrate the legacy package with scripts/install.sh" >&2
-	exit 1
+	fail "legacy package luci-app-ikev2-pbr is installed; use scripts/install.sh for the one-time migration"
 }
+free_kib="$$(df -Pk /overlay 2>/dev/null | awk 'NR == 2 { print $$4 }')"
+[ -n "$$free_kib" ] || free_kib="$$(df -Pk / 2>/dev/null | awk 'NR == 2 { print $$4 }')"
+case "$${free_kib:-0}" in *[!0-9]*) free_kib=0 ;; esac
+[ "$$free_kib" -ge 1024 ] ||
+	fail "insufficient persistent storage to install the bootstrap package ($$free_kib KiB free)"
 exit 0
 endef
 
@@ -174,9 +178,55 @@ endef
 
 define Package/luci-app-ikev2-manager/prerm
 #!/bin/sh
-[ -n "$${IPKG_INSTROOT}" ] && exit 0
-# Overview owns runtime cleanup. Keeping prerm non-destructive prevents
-# opkg upgrades from briefly deleting live XFRM interfaces.
+set -eu
+[ -n "$${IPKG_INSTROOT:-}" ] && exit 0
+case "$${1:-}" in
+	remove) ;;
+	*) exit 0 ;;
+esac
+fail() {
+	echo "IKEv2 Manager for OpenWrt: $$*" >&2
+	exit 1
+}
+configured="$$(uci -q get ikev2-manager.globals.configured 2>/dev/null || echo 0)"
+if [ "$$configured" = 1 ]; then
+	[ -x /usr/libexec/ikev2-manager-system ] ||
+		fail "managed mode is enabled but the cleanup helper is missing; disable the app before removing it"
+	/usr/libexec/ikev2-manager-system disable >/dev/null 2>&1 ||
+		fail "unable to disable managed mode; package removal stopped before changing files"
+elif [ -x /usr/libexec/ikev2-manager-system ]; then
+	/usr/libexec/ikev2-manager-system disable >/dev/null 2>&1 || true
+fi
+swanctl --terminate --ike proxy-out --timeout 3 >/dev/null 2>&1 || true
+swanctl --terminate --ike ikev2-in --timeout 3 >/dev/null 2>&1 || true
+rm -f /etc/swanctl/conf.d/20-proxy-out.conf
+rm -f /etc/swanctl/conf.d/30-inbound.conf
+rm -f /etc/swanctl/conf.d/90-proxy-out-secret.conf
+rm -f /etc/swanctl/conf.d/91-inbound-secrets.conf
+rm -f /etc/swanctl/x509/ikev2.pem
+rm -f /etc/swanctl/private/ikev2.key
+rm -f /etc/swanctl/x509ca/ikev2-le-isrg-root-*.pem
+rm -f /etc/swanctl/x509ca/ikev2-server-chain-*.pem
+for service in ikev2-health ikev2-xfrm ikev2-domain-router; do
+	[ -x "/etc/init.d/$$service" ] || continue
+	"/etc/init.d/$$service" stop >/dev/null 2>&1 || true
+	"/etc/init.d/$$service" disable >/dev/null 2>&1 || true
+done
+rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
+rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
+rm -f /tmp/luci-indexcache
+rm -rf /tmp/luci-modulecache
+rm -f /tmp/ikev2-manager-action.log /tmp/ikev2-system-action.log
+rm -f /tmp/ikev2-manager-deps.log /tmp/ikev2-manager-deps.status
+rm -f /tmp/ikev2-manager-doctor.last /tmp/ikev2-manager-preflight.last
+rm -f /tmp/ikev2-domains-community.log /tmp/ikev2-domains-pbr-restart.log
+rm -f /tmp/ikev2-acme.log /tmp/ikev2-acme.status
+rm -f /var/run/ikev2-vip4 /var/run/ikev2-manager-action.status
+rm -f /var/run/ikev2-system-action.status /var/run/ikev2-action.lock.status
+rm -rf /var/run/ikev2-manager-actions /var/run/ikev2-system-actions
+rmdir /var/run/ikev2-action.lock 2>/dev/null || true
+fw4 -q reload >/dev/null 2>&1 || true
+/etc/init.d/rpcd restart >/dev/null 2>&1 || true
 exit 0
 endef
 

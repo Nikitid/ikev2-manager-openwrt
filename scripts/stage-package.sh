@@ -96,7 +96,11 @@ PY
 )"
 {
 	printf 'Package: %s\n' "$PKG_NAME"
-	printf 'Version: %s-r%s\n' "$PKG_VERSION" "$PKG_RELEASE"
+	if [ -n "$PKG_RELEASE" ]; then
+		printf 'Version: %s-r%s\n' "$PKG_VERSION" "$PKG_RELEASE"
+	else
+		printf 'Version: %s\n' "$PKG_VERSION"
+	fi
 	cat <<'EOF'
 Depends: luci-base, rpcd-mod-file, jsonfilter
 Section: luci
@@ -145,12 +149,6 @@ echo "Open LuCI -> Services -> IKEv2 Manager for OpenWrt."
 exit 0
 EOF
 
-cat >"$stage/CONTROL/prerm" <<'EOF'
-#!/bin/sh
-[ -n "${IPKG_INSTROOT:-}" ] && exit 0
-# Overview owns runtime cleanup. Keeping prerm non-destructive prevents
-# opkg upgrades from briefly deleting live XFRM interfaces.
-exit 0
-EOF
+install -m 755 "$root/scripts/package-prerm.sh" "$stage/CONTROL/prerm"
 
 chmod 755 "$stage/CONTROL/preinst" "$stage/CONTROL/postinst" "$stage/CONTROL/prerm"

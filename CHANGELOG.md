@@ -1,12 +1,17 @@
 # Changelog
 
-This project follows semantic versioning for the application version and uses
-the OpenWrt package release suffix (`-rN`) for packaging revisions.
+This project follows semantic versioning for the application and release tags.
 
-## Unreleased
+## 1.0.1 - 2026-07-07
 
+- Released version `1.0.1`.
 - Reworked the outbound DNS editor around addable primary, bootstrap and
   fallback resolver rows, provider presets and native dnsproxy upstream modes.
+- Added remove-time cleanup for generated runtime state. Explicit package
+  removal now disables managed mode and removes rendered strongSwan profiles
+  before files are deleted, while upgrades keep live routing untouched.
+- Aligned the SDK Makefile preinstall checks with the canonical IPK preinstall
+  guard, including required base commands and persistent-storage preflight.
 - Added Mullvad and Yandex resolver presets and allowed fallback resolvers to
   use a transport different from the primary group.
 - Added a Russian primary README and retained the English documentation as a
