@@ -12,23 +12,70 @@ die() {
 [ "${DISTRIB_ID:-}" = OpenWrt ] ||
 	die "Official OpenWrt is required; found ${DISTRIB_ID:-unknown vendor firmware}"
 case "${DISTRIB_RELEASE:-}" in
-	24.10.*) ;;
-	25.12.*) die 'OpenWrt 25.12 uses apk and is not supported by this release' ;;
-	*) die "OpenWrt 24.10.x is required; found ${DISTRIB_RELEASE:-unknown}" ;;
+	24.10.*) package_manager=opkg ;;
+	25.12.*) package_manager=apk ;;
+	*) die "OpenWrt 24.10.x or 25.12.x is required; found ${DISTRIB_RELEASE:-unknown}" ;;
 esac
+command -v "$package_manager" >/dev/null 2>&1 ||
+	die "required package manager is missing: $package_manager"
 
-[ "$#" -eq 1 ] || die "Usage: $0 /tmp/luci-app-ikev2-manager_*.ipk"
+[ "$#" -eq 1 ] || die "Usage: $0 /tmp/luci-app-ikev2-manager_*.ipk|*.apk"
 package="$1"
 [ -s "$package" ] || die "Package not found: $package"
+case "$package_manager:$package" in
+	opkg:*.ipk | apk:*.apk) ;;
+	opkg:*) die 'OpenWrt 24.10 requires an .ipk package' ;;
+	apk:*) die 'OpenWrt 25.12 requires an .apk package' ;;
+esac
+
+pkg_update() {
+	case "$package_manager" in
+		opkg) opkg update ;;
+		apk) apk update ;;
+		*) return 1 ;;
+	esac
+}
+
+pkg_install_plan() {
+	case "$package_manager" in
+		opkg) opkg install --noaction "$1" ;;
+		apk) apk add --simulate "$1" ;;
+		*) return 1 ;;
+	esac
+}
+
+pkg_install() {
+	case "$package_manager" in
+		opkg) opkg install "$1" ;;
+		apk) apk add "$1" ;;
+		*) return 1 ;;
+	esac
+}
+
+legacy_installed() {
+	case "$package_manager" in
+		opkg) opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' ;;
+		apk) apk info -e luci-app-ikev2-pbr >/dev/null 2>&1 ;;
+		*) return 1 ;;
+	esac
+}
+
+legacy_remove() {
+	case "$package_manager" in
+		opkg) opkg remove luci-app-ikev2-pbr ;;
+		apk) apk del luci-app-ikev2-pbr ;;
+		*) return 1 ;;
+	esac
+}
 
 backup="/tmp/ikev2-manager-install-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
 sysupgrade -b "$backup"
 printf 'Configuration backup: %s\n' "$backup"
 
-opkg update
+pkg_update
 legacy=0
 migration_dir="/tmp/ikev2-manager-migration-$$"
-if opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed'; then
+if legacy_installed; then
 	legacy=1
 	printf 'Migrating legacy package luci-app-ikev2-pbr...\n'
 	mkdir -p "$migration_dir"
@@ -42,12 +89,12 @@ if opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed';
 		mkdir -p "$migration_dir${file%/*}"
 		cp -p "$file" "$migration_dir$file"
 	done
-	opkg remove luci-app-ikev2-pbr
-elif ! opkg install --noaction "$package"; then
+	legacy_remove
+elif ! pkg_install_plan "$package"; then
 	die 'Package preflight failed; no packages were changed'
 fi
 
-if ! opkg install "$package"; then
+if ! pkg_install "$package"; then
 	if [ "$legacy" = 1 ]; then
 		printf 'Legacy package files were removed. Configuration is preserved in place.\n' >&2
 		printf 'Reinstall the previous IPK or restore: %s\n' "$backup" >&2
