@@ -16,26 +16,54 @@ fail() {
 	fail "official OpenWrt is required; found ${DISTRIB_ID:-unknown vendor firmware}"
 
 case "${DISTRIB_RELEASE:-}" in
-	24.10.*) ;;
-	25.12.*)
-		fail 'OpenWrt 25.12 uses apk and is not supported by this opkg release'
-		;;
+	24.10.*) package_manager=opkg ;;
+	25.12.*) package_manager=apk ;;
 	*)
-		fail "OpenWrt 24.10.x is required; found ${DISTRIB_RELEASE:-unknown}"
+		fail "OpenWrt 24.10.x or 25.12.x is required; found ${DISTRIB_RELEASE:-unknown}"
 		;;
 esac
 
-for command in opkg uci ubus fw4; do
+for command in "$package_manager" uci ubus fw4; do
 	command -v "$command" >/dev/null 2>&1 ||
 		fail "required base command is missing: $command"
 done
 
-grep -qE 'downloads\.openwrt\.org/releases/24\.10\.' \
-	/etc/opkg/distfeeds.conf 2>/dev/null ||
-	fail 'official OpenWrt 24.10 release package feeds are required'
+feed_file_matches() {
+	pattern="$1"
+	shift
+	for file in "$@"; do
+		[ -r "$file" ] || continue
+		grep -qE "$pattern" "$file" && return 0
+	done
+	return 1
+}
 
-if opkg status luci-app-ikev2-pbr 2>/dev/null |
-	grep -q '^Status: .* installed'; then
+case "$package_manager:${DISTRIB_RELEASE:-}" in
+	opkg:24.10.*)
+		feed_file_matches 'downloads\.openwrt\.org/releases/24\.10\.' \
+			/etc/opkg/distfeeds.conf ||
+			fail 'official OpenWrt 24.10 release package feeds are required'
+		;;
+	apk:25.12.*)
+		feed_file_matches \
+			'downloads\.openwrt\.org/releases/(25\.12\.|packages-25\.12)' \
+			/etc/apk/repositories /etc/apk/repositories.d/* ||
+			fail 'official OpenWrt 25.12 release package feeds are required'
+		;;
+	*)
+		fail "unsupported package manager $package_manager for OpenWrt ${DISTRIB_RELEASE:-unknown}"
+		;;
+esac
+
+legacy_installed() {
+	case "$package_manager" in
+		opkg) opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' ;;
+		apk) apk info -e luci-app-ikev2-pbr >/dev/null 2>&1 ;;
+		*) return 1 ;;
+	esac
+}
+
+if legacy_installed; then
 	fail 'legacy package luci-app-ikev2-pbr is installed; use scripts/install.sh for the one-time migration'
 fi
 

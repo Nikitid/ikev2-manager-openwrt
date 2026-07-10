@@ -39,6 +39,7 @@ install_file 644 openwrt/files/lib/upgrade/keep.d/ikev2-manager /lib/upgrade/kee
 install_file 755 luci-ikev2-manager/ikev2-manager.sh /usr/libexec/ikev2-manager
 install_file 755 ikev2-manager-runtime/ikev2-manager-system.sh /usr/libexec/ikev2-manager-system
 install_file 644 ikev2-manager-runtime/lib/actions.sh /usr/libexec/ikev2-manager.d/actions.sh
+install_file 644 ikev2-manager-runtime/lib/package-manager.sh /usr/libexec/ikev2-manager.d/package-manager.sh
 install_file 644 ikev2-manager-runtime/lib/routing.sh /usr/libexec/ikev2-manager.d/routing.sh
 install_file 755 ikev2-manager-runtime/ikev2-health.sh /usr/libexec/ikev2-health
 install_file 755 ikev2-manager-runtime/ikev2-sync-vips.sh /usr/libexec/ikev2-sync-vips
@@ -114,7 +115,7 @@ EOF
 Description: IKEv2 Manager for OpenWrt
  LuCI application and runtime for an IPv4 IKEv2 client, an optional
  road-warrior IKEv2 server, domain PBR, device overrides and fail-closed
- routing on OpenWrt 24.10.
+ routing on OpenWrt 24.10 and experimental OpenWrt 25.12/apk.
 EOF
 } >"$stage/CONTROL/control"
 

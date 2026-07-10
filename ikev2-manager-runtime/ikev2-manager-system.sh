@@ -152,8 +152,7 @@ compatibility_checks() {
 	case "$release" in
 		24.10.*) printf 'openwrt=ok:%s\n' "$release" ;;
 		25.12.*)
-			printf 'openwrt=unsupported:%s-apk-not-supported\n' "$release"
-			ok=0
+			printf 'openwrt=warn:%s-apk-port\n' "$release"
 			;;
 		*)
 			printf 'openwrt=unsupported:%s\n' "$release"
@@ -161,18 +160,21 @@ compatibility_checks() {
 			;;
 	esac
 
-	if command -v opkg >/dev/null 2>&1; then
-		printf 'package_manager=ok:opkg\n'
-	else
-		if command -v apk >/dev/null 2>&1; then
-			printf 'package_manager=unsupported:apk\n'
-		else
+	package_manager="$(pkg_manager_name)"
+	case "$release:$package_manager" in
+		24.10.*:opkg | 25.12.*:apk)
+			printf 'package_manager=ok:%s\n' "$package_manager"
+			;;
+		*:missing)
 			printf 'package_manager=missing\n'
-		fi
-		ok=0
-	fi
-	if grep -qE 'downloads\.openwrt\.org/releases/24\.10\.' \
-		/etc/opkg/distfeeds.conf 2>/dev/null; then
+			ok=0
+			;;
+		*)
+			printf 'package_manager=unsupported:%s-for-%s\n' "$package_manager" "$release"
+			ok=0
+			;;
+	esac
+	if pkg_release_feed_ok "$release"; then
 		printf 'package_feeds=ok:official\n'
 	else
 		printf 'package_feeds=unsupported:non-release-or-vendor\n'
@@ -336,7 +338,7 @@ doctor() {
 
 	# The fail-closed apply sequence is coupled to PBR 1.2.x fw4 behavior.
 	# Unknown or unsupported versions are a hard compatibility failure.
-	pbr_version="$(opkg status pbr 2>/dev/null | sed -n 's/^Version: //p' | head -n1)"
+	pbr_version="$(pkg_version pbr)"
 	case "$pbr_version" in
 		1.2.*) printf 'pbr_version=ok:%s\n' "$pbr_version" ;;
 		'') printf 'pbr_version=missing\n'; ok=0 ;;
@@ -472,7 +474,7 @@ EOF
 
 verify_install_plan() {
 	packages="$(runtime_packages | tr '\n' ' ')"
-	if ! opkg install --noaction dnsmasq-full $packages; then
+	if ! pkg_install_plan dnsmasq-full $packages; then
 		deps_status error 'Required packages do not match this firmware/kernel or are missing from configured feeds'
 		return 1
 	fi
@@ -486,6 +488,7 @@ action_lock_status='/var/run/ikev2-action.lock.status'
 runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-/usr/libexec/ikev2-manager.d}"
 
 . "$runtime_lib_dir/actions.sh"
+. "$runtime_lib_dir/package-manager.sh"
 . "$runtime_lib_dir/routing.sh"
 
 deps_status() {
@@ -499,7 +502,7 @@ deps_status() {
 
 # Heavy installer body. Runs detached (see install_deps) and reports progress
 # through deps_status_file so the LuCI page can poll instead of blocking on a
-# long XHR that would otherwise time out during opkg update/install.
+# long XHR that would otherwise time out during package updates/installations.
 run_install_deps() {
 	DEPS_ACTION_ID="${1:-}"
 	exec >>/tmp/ikev2-manager-deps.log 2>&1
@@ -511,9 +514,13 @@ run_install_deps() {
 	trap 'rm -f "$action_lock_status"; rmdir "$action_lock_dir" 2>/dev/null || true' EXIT INT TERM
 	[ -r /etc/openwrt_release ] || { deps_status error 'This command must run on OpenWrt'; exit 1; }
 	. /etc/openwrt_release
-	case "${DISTRIB_RELEASE:-}" in
-		24.10.*) ;;
-		*) deps_status error "OpenWrt 24.10.x is required; found ${DISTRIB_RELEASE:-unknown}"; exit 1 ;;
+	package_manager="$(pkg_manager_name)"
+	case "${DISTRIB_RELEASE:-}:$package_manager" in
+		24.10.*:opkg | 25.12.*:apk) ;;
+		*)
+			deps_status error "OpenWrt 24.10.x with opkg or 25.12.x with apk is required; found ${DISTRIB_RELEASE:-unknown} with $package_manager"
+			exit 1
+			;;
 	esac
 	if ! preflight >/tmp/ikev2-manager-preflight.last 2>&1; then
 		deps_status error 'Compatibility preflight failed; run ikev2-manager-system preflight'
@@ -525,8 +532,8 @@ run_install_deps() {
 	sysupgrade -b "$backup"
 
 	deps_status running 'Updating package lists...'
-	if ! opkg update; then
-		deps_status error 'opkg update failed; check WAN and DNS connectivity'
+	if ! pkg_update; then
+		deps_status error 'Package list update failed; check WAN and DNS connectivity'
 		exit 1
 	fi
 
@@ -535,17 +542,17 @@ run_install_deps() {
 		exit 1
 	fi
 
-	if ! opkg list-installed dnsmasq-full 2>/dev/null | grep -q '^dnsmasq-full '; then
+	if ! pkg_installed dnsmasq-full; then
 		deps_status running 'Downloading DNS rollback packages...'
 		cache="/tmp/ikev2-manager-dns-packages"
 		rm -rf "$cache"
 		mkdir -p "$cache"
-		if ! (cd "$cache" && opkg download dnsmasq dnsmasq-full); then
+		if ! (cd "$cache" && pkg_download dnsmasq dnsmasq-full); then
 			deps_status error 'Unable to download dnsmasq and dnsmasq-full before replacement'
 			exit 1
 		fi
-		full_pkg="$(find "$cache" -name 'dnsmasq-full_*.ipk' | head -n1)"
-		base_pkg="$(find "$cache" -name 'dnsmasq_*.ipk' | head -n1)"
+		full_pkg="$(pkg_package_file "$cache" dnsmasq-full)"
+		base_pkg="$(pkg_package_file "$cache" dnsmasq)"
 		if [ ! -s "$full_pkg" ] || [ ! -s "$base_pkg" ]; then
 			deps_status error 'DNS rollback packages were not downloaded'
 			exit 1
@@ -553,9 +560,12 @@ run_install_deps() {
 
 		deps_status running 'Replacing dnsmasq with dnsmasq-full...'
 		cp /etc/config/dhcp /tmp/ikev2-manager-dhcp.before-deps
-		opkg remove dnsmasq --force-depends
-		if ! opkg install "$full_pkg"; then
-			opkg install "$base_pkg" || true
+		if [ "$package_manager" = opkg ] && ! pkg_remove_runtime dnsmasq; then
+			deps_status error 'Unable to remove dnsmasq before dnsmasq-full replacement'
+			exit 1
+		fi
+		if ! pkg_install "$full_pkg"; then
+			pkg_install "$base_pkg" || true
 			cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
 			deps_status error 'dnsmasq-full installation failed; dnsmasq restored'
@@ -567,7 +577,7 @@ run_install_deps() {
 
 	deps_status running 'Installing strongSwan, PBR, sing-box and XFRM packages...'
 	packages="$(runtime_packages | tr '\n' ' ')"
-	if ! opkg install $packages; then
+	if ! pkg_install $packages; then
 		deps_status error 'Package installation failed; see /tmp/ikev2-manager-deps.log'
 		exit 1
 	fi
@@ -619,7 +629,7 @@ run_remove_deps() {
 
 	deps_status running 'Removing strongSwan, PBR and XFRM packages...'
 	removable='pbr sing-box strongswan strongswan-charon strongswan-swanctl strongswan-mod-aes strongswan-mod-attr strongswan-mod-constraints strongswan-mod-eap-identity strongswan-mod-eap-mschapv2 strongswan-mod-gcm strongswan-mod-gmp strongswan-mod-hmac strongswan-mod-kdf strongswan-mod-kernel-netlink strongswan-mod-md4 strongswan-mod-openssl strongswan-mod-pem strongswan-mod-pkcs1 strongswan-mod-pubkey strongswan-mod-random strongswan-mod-sha2 strongswan-mod-socket-default strongswan-mod-vici strongswan-mod-x509 kmod-xfrm-interface kmod-nft-tproxy kmod-nf-tproxy swanmon'
-	opkg remove --force-depends $removable >/dev/null 2>&1 || true
+	pkg_remove_runtime $removable >/dev/null 2>&1 || true
 
 	doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
 	deps_status ok 'Runtime dependencies removed. Generic tools and ACME were kept.'
