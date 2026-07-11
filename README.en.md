@@ -34,20 +34,22 @@ remote gateway.
 
 ## Requirements
 
-- official OpenWrt `24.10.x`;
+- official OpenWrt `24.10.x`, or experimental `25.12.x` support;
 - firewall4/nftables and matching official package feeds;
 - IPv4 WAN;
 - sufficient storage for strongSwan, PBR, sing-box, `dnsmasq-full` and
   `dnsproxy`.
 
-Vendor firmware, snapshots, firewall3 and OpenWrt 25.12+ are not supported by
-this release. The validated development device is a GL.iNet Flint 2 running
-official OpenWrt 24.10.7; compatibility is checked by capabilities rather than
-by a router whitelist.
+Vendor firmware, snapshots and firewall3 are not supported. OpenWrt 25.12 is
+currently limited to the validated `mediatek/filogic` and
+`aarch64_cortex-a53` target; OpenWrt 24.10 remains the stable line.
+Compatibility is checked by capabilities rather than by a router whitelist.
 
 ## Installation
 
-Download `luci-app-ikev2-manager_1.0.1_all.ipk` from
+### OpenWrt 24.10
+
+Download `luci-app-ikev2-manager_1.0.2_all.ipk` from
 [Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) and upload
 it through:
 
@@ -73,6 +75,22 @@ Then:
 
 For CLI installation, migration, diagnostics and recovery, see
 [Operations](docs/OPERATIONS.md).
+
+### OpenWrt 25.12
+
+The first installation registers the signed project feed:
+
+```sh
+wget -O /tmp/install-ikev2-manager.sh \
+  https://github.com/Nikitid/ikev2-manager-openwrt/releases/latest/download/install-openwrt25.sh
+sh /tmp/install-ikev2-manager.sh
+```
+
+The bootstrap validates the OpenWrt release and architecture, the public-key
+SHA-256, APK/feed signatures and the package transaction. A failed download or
+validation restores the previous key/feed state before any package is
+installed. Later updates use `apk update` and
+`apk upgrade luci-app-ikev2-manager`.
 
 ## Support
 

@@ -2,6 +2,17 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## Unreleased
+
+## 1.0.2 - 2026-07-12
+
+- Added a signed OpenWrt 25.12 APK feed backed by GitHub Release assets.
+- Added a one-time bootstrap installer that verifies the project release key,
+  registers the feed, simulates the transaction and rolls key/feed changes back
+  when installation fails.
+- Added release-key/SDK identity checks and CI release assembly for signed APKs
+  and `packages.adb` indexes.
+
 ## 1.0.1 - 2026-07-07
 
 - Released version `1.0.1`.
