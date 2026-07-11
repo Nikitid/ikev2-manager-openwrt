@@ -23,6 +23,43 @@ jobs:
         run: ./scripts/check-release-tag.sh "${GITHUB_REF_NAME}"
       - name: Validate and build
         run: ./scripts/ci-check.sh
+      - name: Install OpenWrt SDK build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential file gawk gettext libncurses-dev libssl-dev \
+            rsync unzip zlib1g-dev zstd
+      - name: Download verified OpenWrt 25.12 SDK
+        run: |
+          . ./apk-feed.env
+          mkdir -p build
+          curl --fail --location --silent --show-error \
+            "https://downloads.openwrt.org/releases/${OPENWRT_APK_VERSION}/targets/${OPENWRT_APK_TARGET}/${OPENWRT_APK_SDK_ARCHIVE}" \
+            --output "build/${OPENWRT_APK_SDK_ARCHIVE}"
+          printf '%s  %s\n' \
+            "$OPENWRT_APK_SDK_SHA256" "build/${OPENWRT_APK_SDK_ARCHIVE}" |
+            sha256sum --check
+          tar --use-compress-program=unzstd -xf \
+            "build/${OPENWRT_APK_SDK_ARCHIVE}" -C build
+      - name: Prepare APK release signing key
+        env:
+          SIGNING_KEY: ${{ secrets.OPENWRT_APK_SIGNING_KEY }}
+        run: |
+          test -n "$SIGNING_KEY" || {
+            echo 'OPENWRT_APK_SIGNING_KEY is not configured' >&2
+            exit 1
+          }
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > /tmp/ikev2-manager-apk-release.pem
+      - name: Build signed OpenWrt 25.12 APK feed
+        run: |
+          . ./apk-feed.env
+          OPENWRT_SDK_DIR="$PWD/build/${OPENWRT_APK_SDK_ARCHIVE%.tar.zst}" \
+          OPENWRT_APK_SIGNING_KEY=/tmp/ikev2-manager-apk-release.pem \
+            ./scripts/build-apk-feed.sh
+      - name: Remove APK release signing key
+        if: ${{ always() }}
+        run: rm -f /tmp/ikev2-manager-apk-release.pem
       - name: Publish release assets
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
@@ -30,3 +67,4 @@ jobs:
           files: |
             dist/*.ipk
             dist/SHA256SUMS
+            dist/apk-feed/*

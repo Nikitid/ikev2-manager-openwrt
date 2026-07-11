@@ -8,6 +8,7 @@ cd "$root"
 ./scripts/check-version-sync.sh
 ./scripts/check-public-tree.sh
 ./scripts/check-actions-pinned.sh
+./scripts/check-apk-feed.sh
 
 find luci-ikev2-domains luci-ikev2-manager ikev2-manager-runtime scripts \
 	-type f -name '*.sh' -exec sh -n {} +
@@ -16,6 +17,7 @@ find luci-ikev2-domains luci-ikev2-manager \
 	-type f -name '*.js' -exec node --check {} \;
 
 ./scripts/test-runtime-modules.sh
+./scripts/test-apk-bootstrap.sh
 ./scripts/test-community-domains.sh
 ./scripts/test-user-credentials.sh
 ./scripts/test-server-certificate-chain.sh

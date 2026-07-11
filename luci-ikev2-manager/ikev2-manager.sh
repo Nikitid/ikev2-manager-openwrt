@@ -1032,6 +1032,17 @@ apply_all() {
 	/usr/share/pbr/pbr.user.ikev2out || :
 }
 
+package_installed() {
+	name="$1"
+	if command -v opkg >/dev/null 2>&1; then
+		opkg status "$name" 2>/dev/null | grep -q '^Status: .* installed'
+	elif command -v apk >/dev/null 2>&1; then
+		apk info -e "$name" >/dev/null 2>&1
+	else
+		return 1
+	fi
+}
+
 overview() {
 	cert="$root/etc/swanctl/x509/ikev2.pem"
 	count_lines() {
@@ -1051,7 +1062,7 @@ overview() {
 	printf 'pbr=%s\n' "$(/etc/init.d/pbr running && echo running || echo stopped)"
 	printf 'configured=%s\n' "$configured"
 	printf 'runtime_mode=%s\n' "$runtime_mode"
-	printf 'package_installed=%s\n' "$(opkg status luci-app-ikev2-manager 2>/dev/null | grep -q '^Status: .* installed' && echo 1 || echo 0)"
+	printf 'package_installed=%s\n' "$(package_installed luci-app-ikev2-manager && echo 1 || echo 0)"
 	printf 'zapret=%s\n' "$([ -x /etc/init.d/zapret ] && /etc/init.d/zapret running && echo running || echo not-installed)"
 	printf 'client_enabled=%s\n' "$(getv client enabled)"
 	printf 'client_remote=%s\n' "$(getv client remote_address)"

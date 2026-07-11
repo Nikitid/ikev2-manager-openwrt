@@ -25,6 +25,27 @@ certificates are preserved.
 For the pre-public `luci-app-ikev2-pbr` package, use `scripts/install.sh`; do
 not install both packages together.
 
+### OpenWrt 25.12 signed feed
+
+The supported first-install path for OpenWrt 25.12 is:
+
+```sh
+wget -O /tmp/install-ikev2-manager.sh \
+  https://github.com/Nikitid/ikev2-manager-openwrt/releases/latest/download/install-openwrt25.sh
+sh /tmp/install-ikev2-manager.sh
+```
+
+This installs the project public key and signed feed before adding the package.
+It requires working HTTPS access to GitHub Releases and the official OpenWrt
+feeds. It does not enable VPN, PBR, DNS replacement or firewall rules.
+
+Subsequent updates use:
+
+```sh
+apk update
+apk upgrade luci-app-ikev2-manager
+```
+
 ## Diagnostics
 
 ```sh
