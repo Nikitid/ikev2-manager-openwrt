@@ -42,6 +42,9 @@ tmp/
 *.orig
 *.rej
 *.key
+*-private.pem
+private-key.pem
+signing/
 *.p12
 *.pfx
 *.mobileconfig
