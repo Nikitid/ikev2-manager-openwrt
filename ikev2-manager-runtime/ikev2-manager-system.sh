@@ -399,7 +399,7 @@ doctor() {
 		printf 'xfrm_name_conflict=none\n'
 	fi
 
-	if dnsmasq -v 2>&1 | grep -q 'nftset'; then
+	if pkg_dnsmasq_has_nftset; then
 		printf 'dnsmasq_nftset=ok\n'
 	else
 		printf 'dnsmasq_nftset=missing\n'
@@ -480,6 +480,11 @@ verify_install_plan() {
 	fi
 }
 
+cleanup_dnsmasq_transaction() {
+	rm -rf /tmp/ikev2-manager-dns-packages
+	rm -f /tmp/ikev2-manager-dhcp.before-deps
+}
+
 deps_status_file='/tmp/ikev2-manager-deps.status'
 action_status_file='/var/run/ikev2-system-action.status'
 action_status_dir='/var/run/ikev2-system-actions'
@@ -543,36 +548,54 @@ run_install_deps() {
 	fi
 
 	if ! pkg_installed dnsmasq-full; then
-		deps_status running 'Downloading DNS rollback packages...'
+		dnsmasq_provider="$(pkg_dnsmasq_provider || true)"
+		if [ -z "$dnsmasq_provider" ]; then
+			deps_status error 'No supported dnsmasq provider is installed; dependency installation stopped'
+			exit 1
+		fi
 		cache="/tmp/ikev2-manager-dns-packages"
 		rm -rf "$cache"
 		mkdir -p "$cache"
-		if ! (cd "$cache" && pkg_download dnsmasq dnsmasq-full); then
-			deps_status error 'Unable to download dnsmasq and dnsmasq-full before replacement'
-			exit 1
-		fi
-		full_pkg="$(pkg_package_file "$cache" dnsmasq-full)"
-		base_pkg="$(pkg_package_file "$cache" dnsmasq)"
-		if [ ! -s "$full_pkg" ] || [ ! -s "$base_pkg" ]; then
-			deps_status error 'DNS rollback packages were not downloaded'
-			exit 1
+		if [ "$package_manager" = opkg ]; then
+			deps_status running 'Downloading DNS rollback packages...'
+			if ! (cd "$cache" && pkg_download "$dnsmasq_provider" dnsmasq-full); then
+				deps_status error 'Unable to download dnsmasq packages before replacement'
+				cleanup_dnsmasq_transaction
+				exit 1
+			fi
+			full_pkg="$(pkg_package_file "$cache" dnsmasq-full)"
+			previous_pkg="$(pkg_package_file "$cache" "$dnsmasq_provider")"
+			if [ ! -s "$full_pkg" ] || [ ! -s "$previous_pkg" ]; then
+				deps_status error 'DNS rollback packages were not downloaded'
+				cleanup_dnsmasq_transaction
+				exit 1
+			fi
 		fi
 
 		deps_status running 'Replacing dnsmasq with dnsmasq-full...'
 		cp /etc/config/dhcp /tmp/ikev2-manager-dhcp.before-deps
-		if [ "$package_manager" = opkg ] && ! pkg_remove_runtime dnsmasq; then
-			deps_status error 'Unable to remove dnsmasq before dnsmasq-full replacement'
-			exit 1
-		fi
-		if ! pkg_install "$full_pkg"; then
-			pkg_install "$base_pkg" || true
+		if ! pkg_switch_dnsmasq_full "$cache" "$dnsmasq_provider"; then
+			pkg_restore_dnsmasq "$cache" "$dnsmasq_provider" || true
 			cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
+			rm -f /etc/config/dhcp.apk-new /etc/config/dhcp-opkg
 			/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
-			deps_status error 'dnsmasq-full installation failed; dnsmasq restored'
+			deps_status error 'dnsmasq-full installation failed; previous dnsmasq provider restored'
+			cleanup_dnsmasq_transaction
 			exit 1
 		fi
 		cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
+		rm -f /etc/config/dhcp.apk-new /etc/config/dhcp-opkg
+		if ! pkg_installed dnsmasq-full || ! pkg_dnsmasq_has_nftset; then
+			pkg_restore_dnsmasq "$cache" "$dnsmasq_provider" || true
+			cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
+			rm -f /etc/config/dhcp.apk-new /etc/config/dhcp-opkg
+			/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+			deps_status error 'dnsmasq-full verification failed; previous dnsmasq provider restored'
+			cleanup_dnsmasq_transaction
+			exit 1
+		fi
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+		cleanup_dnsmasq_transaction
 	fi
 
 	deps_status running 'Installing strongSwan, PBR, sing-box and XFRM packages...'

@@ -29,14 +29,15 @@ Implemented in this branch:
 - preflight checks for OpenWrt 25.12 release feeds;
 - dependency installation/removal flow prepared for `apk`;
 - LuCI package-installed detection for `apk` systems;
-- local tests for package file selection and APK package-version parsing.
+- apk-tools 3 installed-version queries and exact dnsmasq provider detection;
+- trusted-feed dnsmasq-full replacement with apk solver rollback;
+- exact dnsmasq nftset capability validation;
 - reproducible APK builds with the official OpenWrt 25.12 SDK;
 - a project-owned P-256 release key, signed APKs and signed `packages.adb`;
 - a rollback-safe bootstrap installer for the GitHub Release APK feed.
 
 Still required before treating 25.12 as supported:
 
-- validate APK maintainer scripts on-device;
 - run `preflight`, dependency installation, `doctor`, apply/disable/remove on
   the real router target;
 - confirm target-specific kmods exist for the router kernel ABI.

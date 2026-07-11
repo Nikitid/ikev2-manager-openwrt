@@ -111,7 +111,7 @@ if [ "$legacy" = 1 ]; then
 		/etc/pbr-ikev2-community-selected.txt; do
 		[ -e "$migration_dir$file" ] || continue
 		cp -p "$migration_dir$file" "$file"
-		rm -f "$file-opkg"
+		rm -f "$file-opkg" "$file.apk-new"
 	done
 	rmdir /www/luci-static/resources/view/ikev2-manager-v2 2>/dev/null || true
 	rmdir /www/luci-static/resources/ikev2-manager-v2 2>/dev/null || true

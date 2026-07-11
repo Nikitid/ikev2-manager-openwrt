@@ -54,10 +54,19 @@ fi
 
 pkg_cache="$tmp/packages"
 mkdir -p "$pkg_cache"
-touch "$pkg_cache/dnsmasq_2.93-r1_all.ipk"
-touch "$pkg_cache/dnsmasq-full_2.93-r1_all.ipk"
-touch "$pkg_cache/dnsmasq-2.93-r1.apk"
-touch "$pkg_cache/dnsmasq-full-2.93-r1.apk"
+printf x >"$pkg_cache/dnsmasq_2.93-r1_all.ipk"
+printf x >"$pkg_cache/dnsmasq-full_2.93-r1_all.ipk"
+printf x >"$pkg_cache/dnsmasq-2.93-r1.apk"
+printf x >"$pkg_cache/dnsmasq-full-2.93-r1.apk"
+cat >"$tmp/bin/opkg" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$TEST_OPKG_LOG"
+case "$1" in
+	remove | install) exit 0 ;;
+	*) exit 1 ;;
+esac
+EOF
+chmod 755 "$tmp/bin/opkg"
 
 IKEV2_PACKAGE_MANAGER=opkg
 export IKEV2_PACKAGE_MANAGER
@@ -69,16 +78,34 @@ export IKEV2_PACKAGE_MANAGER
 	echo 'opkg package lookup did not select the base dnsmasq .ipk file' >&2
 	exit 1
 }
+TEST_OPKG_LOG="$tmp/opkg.log"
+export TEST_OPKG_LOG
+: >"$TEST_OPKG_LOG"
+pkg_switch_dnsmasq_full "$pkg_cache" dnsmasq
+pkg_restore_dnsmasq "$pkg_cache" dnsmasq
+grep -qx 'remove --force-depends dnsmasq' "$TEST_OPKG_LOG"
+grep -qx "install $pkg_cache/dnsmasq-full_2.93-r1_all.ipk" "$TEST_OPKG_LOG"
+grep -qx "install $pkg_cache/dnsmasq_2.93-r1_all.ipk" "$TEST_OPKG_LOG"
 
 cat >"$tmp/bin/apk" <<'EOF'
 #!/bin/sh
-case "$1 $2 $3" in
-	"info -v pbr") echo 'pbr-1.2.2-r14' ;;
-	"info -e pbr") exit 0 ;;
+printf '%s\n' "$*" >>"${TEST_APK_LOG:-/dev/null}"
+case "$1 $2 $3 $4" in
+	"list --installed --manifest pbr") echo 'pbr 1.2.2-r18' ;;
+	"info -e pbr ") exit 0 ;;
+	"info -e dnsmasq ") case " ${TEST_APK_INSTALLED:-} " in *' dnsmasq '*) exit 0;; *) exit 1;; esac ;;
+	"info -e dnsmasq-full ") case " ${TEST_APK_INSTALLED:-} " in *' dnsmasq-full '*) exit 0;; *) exit 1;; esac ;;
+	"info -e dnsmasq-dhcpv6 ") case " ${TEST_APK_INSTALLED:-} " in *' dnsmasq-dhcpv6 '*) exit 0;; *) exit 1;; esac ;;
+	"add dnsmasq-full  ") exit 0 ;;
+	"del dnsmasq-full  ") exit 0 ;;
 	*) exit 1 ;;
 esac
 EOF
-chmod 755 "$tmp/bin/apk"
+cat >"$tmp/bin/dnsmasq" <<'EOF'
+#!/bin/sh
+printf 'Compile time options: IPv6 UBus %s no-DNSSEC\n' "${TEST_DNSMASQ_OPTION:-no-nftset}"
+EOF
+chmod 755 "$tmp/bin/apk" "$tmp/bin/dnsmasq"
 
 IKEV2_PACKAGE_MANAGER=apk
 [ "$(basename "$(pkg_package_file "$pkg_cache" dnsmasq-full)")" = dnsmasq-full-2.93-r1.apk ] || {
@@ -89,7 +116,7 @@ IKEV2_PACKAGE_MANAGER=apk
 	echo 'apk package lookup did not select the base dnsmasq .apk file' >&2
 	exit 1
 }
-[ "$(pkg_version pbr)" = 1.2.2-r14 ] || {
+[ "$(pkg_version pbr)" = 1.2.2-r18 ] || {
 	echo 'apk package version parsing failed' >&2
 	exit 1
 }
@@ -97,5 +124,27 @@ pkg_installed pbr || {
 	echo 'apk installed-package check failed' >&2
 	exit 1
 }
+TEST_APK_INSTALLED=dnsmasq
+export TEST_APK_INSTALLED
+[ "$(pkg_dnsmasq_provider)" = dnsmasq ] || {
+	echo 'apk dnsmasq provider detection failed' >&2
+	exit 1
+}
+TEST_APK_LOG="$tmp/apk.log"
+export TEST_APK_LOG
+: >"$TEST_APK_LOG"
+pkg_switch_dnsmasq_full "$pkg_cache" dnsmasq
+grep -qx 'add dnsmasq-full' "$TEST_APK_LOG"
+TEST_APK_INSTALLED='dnsmasq dnsmasq-full'
+pkg_restore_dnsmasq "$pkg_cache" dnsmasq
+grep -qx 'del dnsmasq-full' "$TEST_APK_LOG"
+TEST_DNSMASQ_OPTION=nftset pkg_dnsmasq_has_nftset || {
+	echo 'dnsmasq nftset capability was not detected' >&2
+	exit 1
+}
+if TEST_DNSMASQ_OPTION=no-nftset pkg_dnsmasq_has_nftset; then
+	echo 'dnsmasq no-nftset was accepted as nftset support' >&2
+	exit 1
+fi
 
 printf 'runtime module tests OK\n'
