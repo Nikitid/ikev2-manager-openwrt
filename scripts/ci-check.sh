@@ -16,6 +16,9 @@ find luci-ikev2-domains luci-ikev2-manager ikev2-manager-runtime scripts \
 find luci-ikev2-domains luci-ikev2-manager \
 	-type f -name '*.js' -exec node --check {} \;
 
+PKG_UPGRADE=1 sh ./scripts/package-prerm.sh
+sh ./scripts/package-prerm.sh upgrade
+
 ./scripts/test-runtime-modules.sh
 ./scripts/test-apk-bootstrap.sh
 ./scripts/test-community-domains.sh
