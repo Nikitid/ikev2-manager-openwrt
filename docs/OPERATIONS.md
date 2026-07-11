@@ -135,11 +135,19 @@ Recovery sequence:
 
 Removing the package disables managed mode first and removes generated runtime
 state, including rendered strongSwan profiles and copied certificate material.
-Package-owned files are removed by `opkg`; user configuration, credentials,
-source certificates, custom destination lists, cached service lists and
+Package-owned files are removed by the active package manager. User
+configuration, credentials, source certificates, custom destination lists, cached service lists and
 sysupgrade backups are preserved. If managed mode is still enabled and cleanup
 cannot run, package removal stops before files are changed.
 
+OpenWrt 24.10:
+
 ```sh
 opkg remove luci-app-ikev2-manager
+```
+
+OpenWrt 25.12:
+
+```sh
+apk del luci-app-ikev2-manager
 ```

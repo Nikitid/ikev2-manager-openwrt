@@ -4,6 +4,19 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
+## 1.0.3 - 2026-07-12
+
+- Fixed OpenWrt 25.12 dependency installation rejecting official fetched
+  dnsmasq packages as untrusted; apk now switches providers by trusted feed
+  name and rolls back through the apk solver.
+- Updated installed-version queries for apk-tools 3 and corrected the dnsmasq
+  nftset capability check so `no-nftset` is not accepted.
+- Preserved the previously installed dnsmasq provider during rollback and
+  removed leftover apk/opkg conffile templates after configuration restore.
+- Fixed APK removal cleanup: OpenWrt apk runs `pre-deinstall` without the opkg
+  `remove` argument, while upgrades are now explicitly skipped through
+  `PKG_UPGRADE` so live routing is not torn down.
+
 ## 1.0.2 - 2026-07-12
 
 - Added a signed OpenWrt 25.12 APK feed backed by GitHub Release assets.
