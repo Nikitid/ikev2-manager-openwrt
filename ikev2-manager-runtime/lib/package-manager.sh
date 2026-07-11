@@ -81,8 +81,8 @@ pkg_version() {
 			opkg status "$1" 2>/dev/null | sed -n 's/^Version: //p' | head -n1
 			;;
 		apk)
-			apk info -v "$1" 2>/dev/null |
-				sed -n "s/^$1-//p" | head -n1
+			apk list --installed --manifest "$1" 2>/dev/null |
+				awk -v package="$1" '$1 == package { print $2; exit }'
 			;;
 	esac
 }
@@ -103,6 +103,58 @@ pkg_package_file() {
 					esac
 				done
 			;;
+	esac
+}
+
+pkg_dnsmasq_provider() {
+	for package in dnsmasq-full dnsmasq-dhcpv6 dnsmasq; do
+		if pkg_installed "$package"; then
+			printf '%s\n' "$package"
+			return 0
+		fi
+	done
+	return 1
+}
+
+pkg_dnsmasq_has_nftset() {
+	dnsmasq -v 2>&1 | tr ' ' '\n' | grep -qx nftset
+}
+
+pkg_switch_dnsmasq_full() {
+	cache="$1"
+	current_provider="$2"
+	case "$(pkg_manager_name)" in
+		opkg)
+			full_pkg="$(pkg_package_file "$cache" dnsmasq-full)"
+			[ -n "$full_pkg" ] && [ -s "$full_pkg" ] || return 1
+			pkg_remove_runtime "$current_provider" && pkg_install "$full_pkg"
+			;;
+		apk)
+			# Installing by feed package name keeps repository trust. A file
+			# produced by `apk fetch` is treated as a standalone package and
+			# is rejected as untrusted even when its feed index was trusted.
+			pkg_install dnsmasq-full
+			;;
+		*) return 1 ;;
+	esac
+}
+
+pkg_restore_dnsmasq() {
+	cache="$1"
+	previous_provider="$2"
+	case "$(pkg_manager_name)" in
+		opkg)
+			previous_pkg="$(pkg_package_file "$cache" "$previous_provider")"
+			[ -n "$previous_pkg" ] && [ -s "$previous_pkg" ] || return 1
+			pkg_install "$previous_pkg"
+			;;
+		apk)
+			if pkg_installed dnsmasq-full; then
+				pkg_remove_runtime dnsmasq-full || return 1
+			fi
+			pkg_installed "$previous_provider" || pkg_install "$previous_provider"
+			;;
+		*) return 1 ;;
 	esac
 }
 
