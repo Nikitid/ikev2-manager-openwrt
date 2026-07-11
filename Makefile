@@ -5,7 +5,7 @@ PKG_NAME:=luci-app-ikev2-manager
 # canonical build (scripts/build-ipk.sh). These SDK literals are kept in sync
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
-PKG_VERSION:=1.0.1
+PKG_VERSION:=1.0.2
 PKG_RELEASE:=
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
@@ -28,7 +28,7 @@ endef
 define Package/luci-app-ikev2-manager/description
  LuCI application and runtime for an IPv4 IKEv2 client, an optional
  road-warrior IKEv2 server, domain-based PBR, device overrides and
- fail-closed routing on OpenWrt 24.10.
+ fail-closed routing on OpenWrt 24.10 and experimental OpenWrt 25.12/apk.
 endef
 
 define Package/luci-app-ikev2-manager/conffiles
@@ -55,22 +55,49 @@ fail() {
 [ "$${DISTRIB_ID:-}" = OpenWrt ] ||
 	fail "official OpenWrt is required; found $${DISTRIB_ID:-unknown vendor firmware}"
 case "$${DISTRIB_RELEASE:-}" in
-	24.10.*) ;;
-	25.12.*)
-		fail "OpenWrt 25.12 uses apk and is not supported by this opkg release"
-		;;
+	24.10.*) package_manager=opkg ;;
+	25.12.*) package_manager=apk ;;
 	*)
-		fail "OpenWrt 24.10.x is required; found $${DISTRIB_RELEASE:-unknown}"
+		fail "OpenWrt 24.10.x or 25.12.x is required; found $${DISTRIB_RELEASE:-unknown}"
 		;;
 esac
-for command in opkg uci ubus fw4; do
+for command in "$$package_manager" uci ubus fw4; do
 	command -v "$$command" >/dev/null 2>&1 ||
 		fail "required base command is missing: $$command"
 done
-grep -qE 'downloads\.openwrt\.org/releases/24\.10\.' /etc/opkg/distfeeds.conf 2>/dev/null || {
-	fail "official OpenWrt 24.10 release package feeds are required"
+feed_file_matches() {
+	pattern="$$1"
+	shift
+	for file in "$$@"; do
+		[ -r "$$file" ] || continue
+		grep -qE "$$pattern" "$$file" && return 0
+	done
+	return 1
 }
-opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' && {
+case "$$package_manager:$${DISTRIB_RELEASE:-}" in
+	opkg:24.10.*)
+		feed_file_matches 'downloads\.openwrt\.org/releases/24\.10\.' \
+			/etc/opkg/distfeeds.conf ||
+			fail "official OpenWrt 24.10 release package feeds are required"
+		;;
+	apk:25.12.*)
+		feed_file_matches \
+			'downloads\.openwrt\.org/releases/(25\.12\.|packages-25\.12)' \
+			/etc/apk/repositories /etc/apk/repositories.d/* ||
+			fail "official OpenWrt 25.12 release package feeds are required"
+		;;
+	*)
+		fail "unsupported package manager $$package_manager for OpenWrt $${DISTRIB_RELEASE:-unknown}"
+		;;
+esac
+legacy_installed() {
+	case "$$package_manager" in
+		opkg) opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' ;;
+		apk) apk info -e luci-app-ikev2-pbr >/dev/null 2>&1 ;;
+		*) return 1 ;;
+	esac
+}
+legacy_installed && {
 	fail "legacy package luci-app-ikev2-pbr is installed; use scripts/install.sh for the one-time migration"
 }
 free_kib="$$(df -Pk /overlay 2>/dev/null | awk 'NR == 2 { print $$4 }')"
@@ -114,6 +141,7 @@ define Package/luci-app-ikev2-manager/install
 	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-manager-system.sh $(1)/usr/libexec/ikev2-manager-system
 	$(INSTALL_DIR) $(1)/usr/libexec/ikev2-manager.d
 	$(INSTALL_DATA) ./ikev2-manager-runtime/lib/actions.sh $(1)/usr/libexec/ikev2-manager.d/actions.sh
+	$(INSTALL_DATA) ./ikev2-manager-runtime/lib/package-manager.sh $(1)/usr/libexec/ikev2-manager.d/package-manager.sh
 	$(INSTALL_DATA) ./ikev2-manager-runtime/lib/routing.sh $(1)/usr/libexec/ikev2-manager.d/routing.sh
 	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-health.sh $(1)/usr/libexec/ikev2-health
 	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-sync-vips.sh $(1)/usr/libexec/ikev2-sync-vips

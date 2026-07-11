@@ -166,7 +166,7 @@ var ru = {
 	'All runtime dependencies installed.': 'Все зависимости установлены.',
 	'Packages installed, but some checks still report missing.': 'Пакеты установлены, но часть проверок ещё показывает «нет».',
 	'Starting dependency installation...': 'Запускаю установку зависимостей...',
-	'opkg update failed; check WAN and DNS connectivity': 'opkg update не удался; проверьте WAN и DNS.',
+	'Package list update failed; check WAN and DNS connectivity': 'Обновление списка пакетов не удалось; проверьте WAN и DNS.',
 	'dnsmasq-full installation failed; dnsmasq restored': 'Установка dnsmasq-full не удалась; dnsmasq восстановлен.',
 	'Package installation failed; see /tmp/ikev2-manager-deps.log': 'Установка пакетов не удалась; см. /tmp/ikev2-manager-deps.log',
 	'Disabling managed configuration...': 'Отключаю управляемую конфигурацию...',
