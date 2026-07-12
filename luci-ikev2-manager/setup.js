@@ -61,8 +61,7 @@ function runDepsJob(button, cmd, doneMsg) {
 					throw new Error(st.message ? _(st.message) : _('Operation failed'));
 				}
 				else {
-					ui.addNotification(null, E('p', {}, [
-						st.message ? _(st.message) : doneMsg ]), 'info');
+					window.setTimeout(function() { window.location.reload(); }, 900);
 				}
 			});
 		},
