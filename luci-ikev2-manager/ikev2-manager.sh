@@ -760,7 +760,17 @@ acme_issue() {
 		(
 			exec >>"$acme_log_file" 2>&1
 			printf '\n=== %s acme issue ===\n' "$(date)"
-			if /etc/init.d/acme start && [ -s "$cert" ]; then
+			issued=0
+			if /etc/init.d/acme renew "$acme_cert_section"; then
+				for attempt in $(seq 1 72); do
+					if [ -s "$cert" ]; then
+						issued=1
+						break
+					fi
+					sleep 5
+				done
+			fi
+			if [ "$issued" = 1 ]; then
 				if [ "$(getv server enabled)" = 1 ]; then
 					# Bring the inbound server up now that the cert exists: copy
 					# it into swanctl, (re)write the connection, and reload. The
