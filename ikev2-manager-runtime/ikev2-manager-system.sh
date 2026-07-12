@@ -494,6 +494,7 @@ runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-/usr/libexec/ikev2-manager.d}"
 
 . "$runtime_lib_dir/actions.sh"
 . "$runtime_lib_dir/package-manager.sh"
+. "$runtime_lib_dir/dependency-state.sh"
 . "$runtime_lib_dir/routing.sh"
 
 deps_status() {
@@ -544,6 +545,10 @@ run_install_deps() {
 
 	deps_status running 'Checking firmware, kernel ABI, storage and package availability...'
 	if ! verify_install_plan; then
+		exit 1
+	fi
+	if ! deps_state_capture; then
+		deps_status error 'Unable to save the pre-install package and DNS state'
 		exit 1
 	fi
 
@@ -601,7 +606,16 @@ run_install_deps() {
 	deps_status running 'Installing strongSwan, PBR, sing-box and XFRM packages...'
 	packages="$(runtime_packages | tr '\n' ' ')"
 	if ! pkg_install $packages; then
-		deps_status error 'Package installation failed; see /tmp/ikev2-manager-deps.log'
+		if deps_state_restore; then
+			deps_state_clear
+			deps_status error 'Package installation failed; the pre-install package and DNS state was restored'
+		else
+			deps_status error 'Package installation failed; automatic rollback also failed; see /tmp/ikev2-manager-deps.log'
+		fi
+		exit 1
+	fi
+	if ! deps_state_mark_installed; then
+		deps_status error 'Dependencies were installed but their ownership record could not be saved'
 		exit 1
 	fi
 
@@ -626,10 +640,8 @@ install_deps() {
 	printf 'action_id=%s\n' "$DEPS_ACTION_ID"
 }
 
-# Remove the strongSwan / PBR / XFRM stack this app installs, returning the
-# router to a clean pre-install state for re-testing. Generic tools (curl,
-# ca-bundle, jsonfilter, conntrack, ip-full, openssl-util) and ACME are kept
-# on purpose — they are shared and removing them can break the router.
+# Restore only packages recorded as application-owned at installation time,
+# together with the DNS provider and DHCP file present before installation.
 run_remove_deps() {
 	DEPS_ACTION_ID="${1:-}"
 	exec >>/tmp/ikev2-manager-deps.log 2>&1
@@ -639,6 +651,10 @@ run_remove_deps() {
 		return 1
 	fi
 	trap 'rm -f "$action_lock_status"; rmdir "$action_lock_dir" 2>/dev/null || true' EXIT INT TERM
+	if ! deps_state_ready; then
+		deps_status error 'Dependency ownership is unavailable; install dependencies once with this version before using Remove'
+		return 1
+	fi
 	deps_status running 'Disabling managed configuration...'
 	uci -q set "$config.globals.configured=0" || true
 	uci -q commit "$config" || true
@@ -650,28 +666,15 @@ run_remove_deps() {
 		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || true
 	fi
 
-	deps_status running 'Removing strongSwan, PBR and XFRM packages...'
-	removable='pbr sing-box strongswan strongswan-charon strongswan-swanctl strongswan-mod-aes strongswan-mod-attr strongswan-mod-constraints strongswan-mod-eap-identity strongswan-mod-eap-mschapv2 strongswan-mod-gcm strongswan-mod-gmp strongswan-mod-hmac strongswan-mod-kdf strongswan-mod-kernel-netlink strongswan-mod-md4 strongswan-mod-openssl strongswan-mod-pem strongswan-mod-pkcs1 strongswan-mod-pubkey strongswan-mod-random strongswan-mod-sha2 strongswan-mod-socket-default strongswan-mod-vici strongswan-mod-x509 kmod-xfrm-interface kmod-nft-tproxy kmod-nf-tproxy swanmon'
-	if ! pkg_remove_runtime $removable; then
+	deps_status running 'Restoring the pre-install DNS and package state...'
+	if ! deps_state_restore; then
 		doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
-		deps_status error 'Runtime dependency removal failed; see /tmp/ikev2-manager-deps.log'
+		deps_status error 'Runtime dependency restore failed; see /tmp/ikev2-manager-deps.log'
 		return 1
 	fi
-	remaining=''
-	for package in $removable; do
-		if pkg_installed "$package"; then
-			remaining="${remaining}${remaining:+ }$package"
-		fi
-	done
-	if [ -n "$remaining" ]; then
-		printf 'Runtime dependency removal left installed packages: %s\n' "$remaining" >&2
-		doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
-		deps_status error 'Some runtime dependencies are still installed; see /tmp/ikev2-manager-deps.log'
-		return 1
-	fi
-
+	deps_state_clear
 	doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
-	deps_status ok 'Runtime dependencies removed. DNS packages, generic tools and ACME were kept.'
+	deps_status ok 'Pre-install DNS, package and managed routing state was restored.'
 }
 
 remove_deps() {
