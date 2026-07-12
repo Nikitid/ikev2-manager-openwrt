@@ -579,7 +579,7 @@ return view.extend({
 							if (st.state === 'error')
 								throw new Error(st.message || _('DNS apply failed'));
 							dnsResult.ok(_('DNS is working'));
-							window.setTimeout(function() { window.location.reload(); }, 500);
+							return L.resolveDefault(fs.exec(systemHelper, [ 'dns-get' ]), { stdout: '' });
 						});
 				}
 			});

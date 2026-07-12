@@ -388,7 +388,7 @@ return view.extend({
 							_('The operation continues in the background. You can use the button again.') :
 							_('Saved.') ]), st && st.state === 'timeout' ? 'warning' : 'info');
 					if (!st || st.state !== 'timeout')
-						window.setTimeout(function() { window.location.reload(); }, 500);
+						window.dispatchEvent(new Event('ikev2-coverage-updated'));
 				},
 				onError: function(message) {
 					ui.addNotification(null, E('p', {}, [ message ]), 'danger');

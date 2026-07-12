@@ -5,6 +5,12 @@ This project follows semantic versioning for the application and release tags.
 ## Unreleased
 
 ## 1.0.5 - 2026-07-12
+## 1.0.10 - 2026-07-12
+
+- Removed full-page reloads after dependency, DNS, user and coverage actions.
+  Each action now keeps its completion state visible in the current view while
+  the page remains open.
+
 ## 1.0.9 - 2026-07-12
 
 - Fixed ACME issuance: the request action now runs the ACME renewal command
