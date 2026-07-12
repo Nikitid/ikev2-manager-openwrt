@@ -45,7 +45,7 @@ function runUserAction(button, args, success, opts) {
 			return common.execChecked(helper, args, _('Operation failed')).then(function() {
 				ui.hideModal();
 				ui.addNotification(null, E('p', {}, [ success ]), 'info');
-				window.setTimeout(function() { window.location.reload(); }, 350);
+				window.dispatchEvent(new Event('ikev2-users-updated'));
 			});
 		},
 		onError: function(message) {
