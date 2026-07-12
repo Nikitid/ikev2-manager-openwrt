@@ -5,6 +5,13 @@ This project follows semantic versioning for the application and release tags.
 ## Unreleased
 
 ## 1.0.5 - 2026-07-12
+## 1.0.9 - 2026-07-12
+
+- Fixed ACME issuance: the request action now runs the ACME renewal command
+  instead of only enabling its nightly cron schedule.
+- Removed the duplicate dependency-complete notification; Overview refreshes
+  itself after a completed dependency transaction.
+
 ## 1.0.8 - 2026-07-12
 
 - Keep `ca-bundle` installed: APK requires it to securely update HTTPS feeds
