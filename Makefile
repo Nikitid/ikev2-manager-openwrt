@@ -5,7 +5,7 @@ PKG_NAME:=luci-app-ikev2-manager
 # canonical build (scripts/build-ipk.sh). These SDK literals are kept in sync
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
-PKG_VERSION:=1.0.4
+PKG_VERSION:=1.0.5
 PKG_RELEASE:=
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
@@ -188,7 +188,6 @@ define Package/luci-app-ikev2-manager/postinst
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
 rm -f /tmp/luci-indexcache
 rm -rf /tmp/luci-modulecache
-/etc/init.d/rpcd restart >/dev/null 2>&1 || true
 rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
 rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
 if [ "$$(uci -q get ikev2-manager.globals.configured)" = 1 ]; then
@@ -258,7 +257,6 @@ rm -f /var/run/ikev2-system-action.status /var/run/ikev2-action.lock.status
 rm -rf /var/run/ikev2-manager-actions /var/run/ikev2-system-actions
 rmdir /var/run/ikev2-action.lock 2>/dev/null || true
 fw4 -q reload >/dev/null 2>&1 || true
-/etc/init.d/rpcd restart >/dev/null 2>&1 || true
 exit 0
 endef
 
