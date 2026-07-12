@@ -104,6 +104,46 @@ function splitDnsList(value) {
 	return (value || '').trim().split(/\s+/).filter(Boolean);
 }
 
+function configuredDnsValue(values, key, currentKey, defaultValue) {
+	if (Object.prototype.hasOwnProperty.call(values, key))
+		return values[key] || '';
+	if (currentKey && Object.prototype.hasOwnProperty.call(values, currentKey))
+		return values[currentKey] || '';
+	return defaultValue || '';
+}
+
+function dnsEndpointProtocol(value) {
+	if (value.indexOf('udp://') === 0) return 'udp';
+	if (value.indexOf('tcp://') === 0) return 'tcp';
+	if (value.indexOf('tls://') === 0) return 'dot';
+	if (value.indexOf('https://') === 0) return 'doh';
+	if (value.indexOf('h3://') === 0) return 'h3';
+	if (value.indexOf('quic://') === 0) return 'doq';
+	if (value.indexOf('sdns://') === 0) return 'dnscrypt';
+	return 'unknown';
+}
+
+function validDnsEndpoint(protocol, value) {
+	var accepted = {
+		udp: 'udp://', tcp: 'tcp://', dot: 'tls://', doh: 'https://',
+		doh3: 'https://', h3: 'h3://', doq: 'quic://', dnscrypt: 'sdns://'
+	};
+	var prefix = accepted[protocol];
+	return !!prefix && value.indexOf(prefix) === 0 && value.length > prefix.length &&
+		/^[A-Za-z0-9._~:/?@%+=,&;-]+$/.test(value);
+}
+
+function validBootstrapEndpoint(value) {
+	var match = value.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+):(\d+)$/);
+	if (!match)
+		return false;
+	for (var i = 1; i <= 4; i++)
+		if (Number(match[i]) > 255)
+			return false;
+	var port = Number(match[5]);
+	return port >= 1 && port <= 65535;
+}
+
 function dnsEndpointEditor(value, placeholder, addLabel, emptyLabel) {
 	var list = E('div', { 'class': 'ikev2-dns-endpoints' });
 	var add = E('button', {
@@ -408,14 +448,14 @@ return view.extend({
 		]);
 		var endpointPlaceholder = 'https://dns.example/dns-query';
 		var dnsUpstream = dnsEndpointEditor(
-			dnsValue.upstream || dnsValue.current_upstream || '',
+			configuredDnsValue(dnsValue, 'upstream', 'current_upstream', ''),
 			endpointPlaceholder, _('Add DNS server'), _('No DNS servers added'));
 		var dnsBootstrap = dnsEndpointEditor(
-			dnsValue.bootstrap || dnsValue.current_bootstrap ||
-				'1.1.1.1:53 1.0.0.1:53',
+			configuredDnsValue(dnsValue, 'bootstrap', 'current_bootstrap',
+				'1.1.1.1:53 1.0.0.1:53'),
 			'1.1.1.1:53', _('Add bootstrap server'), _('No bootstrap servers added'));
 		var dnsFallback = dnsEndpointEditor(
-			dnsValue.fallback || dnsValue.current_fallback || '',
+			configuredDnsValue(dnsValue, 'fallback', 'current_fallback', ''),
 			endpointPlaceholder, _('Add fallback server'), _('No fallback servers added'));
 		var dnsResult = common.inlineResult();
 		var dnsSave = E('button', {
@@ -484,21 +524,36 @@ return view.extend({
 		});
 
 		dnsSave.addEventListener('click', function() {
-			var payload = [
-				dnsManaged.value,
-				dnsProtocol.value,
-				dnsProvider.value,
-				dnsUpstreamMode.value,
-				dnsUpstream.values().join(' '),
-				dnsBootstrap.values().join(' '),
-				dnsFallback.values().join(' ')
-			].join('\n') + '\n';
 			return common.runAction({
 				button: dnsSave,
 				result: dnsResult,
 				busy: _('Applying and testing DNS...'),
 				failure: _('DNS apply failed'),
 				run: function() {
+					var upstream = dnsUpstream.values();
+					var bootstrap = dnsBootstrap.values();
+					var fallback = dnsFallback.values();
+					if (dnsManaged.value === '1') {
+						if (!upstream.length || !upstream.every(function(value) {
+							return validDnsEndpoint(dnsProtocol.value, value);
+						}))
+							throw new Error(_('Invalid DNS upstream for the selected protocol'));
+						if (!bootstrap.length || !bootstrap.every(validBootstrapEndpoint))
+							throw new Error(_('Bootstrap DNS must contain IPv4:port entries'));
+						if (!fallback.every(function(value) {
+							return validDnsEndpoint(dnsEndpointProtocol(value), value);
+						}))
+							throw new Error(_('Invalid fallback DNS endpoint'));
+					}
+					var payload = [
+						dnsManaged.value,
+						dnsProtocol.value,
+						dnsProvider.value,
+						dnsUpstreamMode.value,
+						upstream.join(' '),
+						bootstrap.join(' '),
+						fallback.join(' ')
+					].join('\n') + '\n';
 					return fs.write('/tmp/ikev2-manager-dns.in', payload, 384)
 						.then(function() {
 							return common.execChecked(systemHelper, [ 'dns-set-async' ],
