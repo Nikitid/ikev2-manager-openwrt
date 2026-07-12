@@ -64,6 +64,5 @@ rm -rf /var/run/ikev2-manager-actions /var/run/ikev2-system-actions
 rmdir /var/run/ikev2-action.lock 2>/dev/null || true
 
 fw4 -q reload >/dev/null 2>&1 || true
-/etc/init.d/rpcd restart >/dev/null 2>&1 || true
 
 exit 0
