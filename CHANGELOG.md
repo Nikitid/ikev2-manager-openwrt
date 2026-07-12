@@ -5,6 +5,12 @@ This project follows semantic versioning for the application and release tags.
 ## Unreleased
 
 ## 1.0.5 - 2026-07-12
+## 1.0.7 - 2026-07-12
+
+- Do not record `jsonfilter` as a removable runtime package: it is a required
+  dependency of the LuCI bootstrap package and must remain installed while the
+  application is present.
+
 ## 1.0.6 - 2026-07-12
 
 - Runtime dependency installation now records the original DNS/DHCP state and
