@@ -99,6 +99,13 @@ deps_state_restore() {
 
 	packages="$(grep -Fxv 'dnsmasq-full' "$owned" 2>/dev/null | tr '\n' ' ')"
 	[ -z "$packages" ] || pkg_remove_runtime $packages || return 1
+	if deps_state_has owned-packages dnsproxy &&
+	   [ "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)" = '127.0.0.1#5453' ]; then
+		uci -q delete dhcp.@dnsmasq[0].server || true
+		uci -q delete dhcp.@dnsmasq[0].noresolv || true
+		uci commit dhcp || return 1
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || return 1
+	fi
 
 	[ -z "$(deps_state_remaining)" ] || return 1
 	if deps_state_has owned-packages dnsmasq-full; then

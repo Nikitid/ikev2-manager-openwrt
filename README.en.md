@@ -49,7 +49,7 @@ Compatibility is checked by capabilities rather than by a router whitelist.
 
 ### OpenWrt 24.10
 
-Download `luci-app-ikev2-manager_1.0.7_all.ipk` from
+Download `luci-app-ikev2-manager_1.0.8_all.ipk` from
 [Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) and upload
 it through:
 
