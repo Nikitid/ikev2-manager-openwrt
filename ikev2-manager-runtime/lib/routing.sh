@@ -11,6 +11,33 @@ ensure_forward_chain() {
 	forward_chain_ok
 }
 
+router_dns_ready() {
+	server="${1:-127.0.0.1}"
+	domain="${2:-openwrt.org}"
+	nslookup "$domain" "$server" 2>/dev/null |
+		awk '
+			/^Name:/ { answer = 1; next }
+			answer && /^Address[^:]*:/ { found = 1 }
+			END { exit found ? 0 : 1 }
+		'
+}
+
+wait_for_router_dns() {
+	server="${1:-127.0.0.1}"
+	attempts="${2:-20}"
+	domain="${3:-openwrt.org}"
+	case "$attempts" in
+		'' | *[!0-9]* | 0) return 1 ;;
+	esac
+	tries=0
+	while [ "$tries" -lt "$attempts" ]; do
+		router_dns_ready "$server" "$domain" && return 0
+		tries=$((tries + 1))
+		[ "$tries" -ge "$attempts" ] || sleep 1
+	done
+	return 1
+}
+
 ensure_ipv6_failfast() {
 	ip -6 route show default 2>/dev/null | grep -q . && return 0
 	ip -6 route replace unreachable default metric 2147483647 2>/dev/null || true

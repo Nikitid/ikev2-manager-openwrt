@@ -4,6 +4,20 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
+## 1.0.4 - 2026-07-12
+
+- Fixed an intentionally empty managed DNS fallback being replaced in LuCI by
+  the dnsproxy package default, which could break DNS validation and Reliable
+  mode domain routing.
+- Added client-side DNS endpoint validation and preserved the exact backend
+  failure reason instead of reporting every failure as a completed rollback.
+- Replaced the ambiguous Reliable mode warning with the failed runtime
+  invariant: service, dnsmasq hand-off/cache, nftables table or policy rule.
+- Wait for the router resolver after PBR/community refresh before releasing the
+  global action lock, preventing a successful action from briefly returning
+  while DNS still refuses connections.
+- Verified guarded removal cleanup in the generated APK metadata.
+
 ## 1.0.3 - 2026-07-12
 
 - Fixed OpenWrt 25.12 dependency installation rejecting official fetched

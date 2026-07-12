@@ -94,6 +94,12 @@ cp "$package_path" "$output/$package_name"
 	"$output/packages.adb" >"$tmp/packages.json"
 grep -q "${PKG_NAME}" "$tmp/packages.json" ||
 	fail 'generated index does not contain the package'
+"$apk_tool" --keys-dir "$root/keys" adbdump --format json \
+	"$output/$package_name" >"$tmp/package.json"
+grep -Fq '"pre-deinstall":' "$tmp/package.json" &&
+grep -Fq 'PKG_UPGRADE:-0' "$tmp/package.json" &&
+grep -Fq "remove | '')" "$tmp/package.json" ||
+	fail 'built APK does not contain the guarded removal cleanup'
 
 cp "$public_key" "$output/ikev2-manager-release.pem"
 cp "$root/scripts/install-openwrt25.sh" "$output/install-openwrt25.sh"
