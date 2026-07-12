@@ -80,6 +80,7 @@ cat >"$tmp/bin/opkg" <<'EOF'
 printf '%s\n' "$*" >>"$TEST_OPKG_LOG"
 case "$1" in
 	remove | install) exit 0 ;;
+	list-installed) printf '%s 1\n' "$2"; exit 0 ;;
 	*) exit 1 ;;
 esac
 EOF
@@ -109,12 +110,9 @@ cat >"$tmp/bin/apk" <<'EOF'
 printf '%s\n' "$*" >>"${TEST_APK_LOG:-/dev/null}"
 case "$1 $2 $3 $4" in
 	"list --installed --manifest pbr") echo 'pbr 1.2.2-r18' ;;
-	"info -e pbr ") exit 0 ;;
-	"info -e dnsmasq ") case " ${TEST_APK_INSTALLED:-} " in *' dnsmasq '*) exit 0;; *) exit 1;; esac ;;
-	"info -e dnsmasq-full ") case " ${TEST_APK_INSTALLED:-} " in *' dnsmasq-full '*) exit 0;; *) exit 1;; esac ;;
-	"info -e dnsmasq-dhcpv6 ") case " ${TEST_APK_INSTALLED:-} " in *' dnsmasq-dhcpv6 '*) exit 0;; *) exit 1;; esac ;;
+	"info -e "*) case " ${TEST_APK_INSTALLED:-} " in *" $3 "*) exit 0;; *) exit 1;; esac ;;
 	"add dnsmasq-full  ") exit 0 ;;
-	"del dnsmasq-full  ") exit 0 ;;
+	"del dnsmasq-full  " | "del pbr strongswan ") exit 0 ;;
 	*) exit 1 ;;
 esac
 EOF
@@ -125,6 +123,8 @@ EOF
 chmod 755 "$tmp/bin/apk" "$tmp/bin/dnsmasq"
 
 IKEV2_PACKAGE_MANAGER=apk
+TEST_APK_INSTALLED=pbr
+export TEST_APK_INSTALLED
 [ "$(basename "$(pkg_package_file "$pkg_cache" dnsmasq-full)")" = dnsmasq-full-2.93-r1.apk ] || {
 	echo 'apk package lookup did not select the .apk file' >&2
 	exit 1
@@ -155,6 +155,10 @@ grep -qx 'add dnsmasq-full' "$TEST_APK_LOG"
 TEST_APK_INSTALLED='dnsmasq dnsmasq-full'
 pkg_restore_dnsmasq "$pkg_cache" dnsmasq
 grep -qx 'del dnsmasq-full' "$TEST_APK_LOG"
+TEST_APK_INSTALLED='pbr strongswan'
+: >"$TEST_APK_LOG"
+pkg_remove_runtime pbr missing strongswan
+grep -qx 'del pbr strongswan' "$TEST_APK_LOG"
 TEST_DNSMASQ_OPTION=nftset pkg_dnsmasq_has_nftset || {
 	echo 'dnsmasq nftset capability was not detected' >&2
 	exit 1

@@ -24,4 +24,9 @@ fi
 grep -Fq '[ "${PKG_UPGRADE:-0}" = 1 ] && exit 0' "$prerm"
 grep -Fq "remove | '') ;;" "$prerm"
 
+if grep -R -F '/etc/init.d/rpcd restart' "$makefile" "$prerm" "$root/scripts/stage-package.sh"; then
+	printf '%s\n' 'package lifecycle scripts must not restart rpcd during apk/opkg transactions' >&2
+	exit 1
+fi
+
 printf '%s\n' 'package lifecycle tests OK'

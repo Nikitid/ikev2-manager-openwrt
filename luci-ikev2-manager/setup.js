@@ -435,7 +435,7 @@ return view.extend({
 		});
 
 		removeDeps.addEventListener('click', function() {
-			if (!window.confirm(_('Remove strongSwan, PBR, sing-box and XFRM/TProxy packages? The VPN and reliable domain routing stop, and managed configuration is cleared. Generic tools and ACME are kept.')))
+			if (!window.confirm(_('Remove strongSwan, PBR, sing-box and XFRM/TProxy packages? The VPN and reliable domain routing stop, and managed configuration is cleared. DNS packages, generic tools and ACME are kept.')))
 				return;
 			runDepsJob(removeDeps, 'remove-deps', _('Runtime dependencies removed.'));
 		});
@@ -479,7 +479,7 @@ return view.extend({
 					])
 				]),
 				common.section(_('Runtime dependencies'),
-					_('This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. VPN and routing stay disabled until managed mode is enabled.'),
+					_('This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. Removing dependencies keeps the DNS packages, generic tools and ACME. VPN and routing stay disabled until managed mode is enabled.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-deps-summary' }, [
 							E('h4', {}, [ _('Key checks') ]),

@@ -134,7 +134,6 @@ cat >"$stage/CONTROL/postinst" <<'EOF'
 [ -n "${IPKG_INSTROOT:-}" ] && exit 0
 rm -f /tmp/luci-indexcache
 rm -rf /tmp/luci-modulecache
-/etc/init.d/rpcd restart >/dev/null 2>&1 || true
 rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
 rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
 if [ "$(uci -q get ikev2-manager.globals.configured)" = 1 ]; then
