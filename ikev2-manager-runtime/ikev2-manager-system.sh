@@ -462,7 +462,6 @@ ip-full
 openssl-util
 curl
 libcurl4
-ca-bundle
 conntrack
 swanmon
 acme

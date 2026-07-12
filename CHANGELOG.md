@@ -5,6 +5,13 @@ This project follows semantic versioning for the application and release tags.
 ## Unreleased
 
 ## 1.0.5 - 2026-07-12
+## 1.0.8 - 2026-07-12
+
+- Keep `ca-bundle` installed: APK requires it to securely update HTTPS feeds
+  after a dependency reset.
+- Remove the application's dnsmasq hand-off to a removed local dnsproxy so a
+  clean Install can resolve package feeds through the original WAN resolver.
+
 ## 1.0.7 - 2026-07-12
 
 - Do not record `jsonfilter` as a removable runtime package: it is a required
