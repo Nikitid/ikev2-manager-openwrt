@@ -5,6 +5,15 @@ This project follows semantic versioning for the application and release tags.
 ## Unreleased
 
 ## 1.0.5 - 2026-07-12
+## 1.0.6 - 2026-07-12
+
+- Runtime dependency installation now records the original DNS/DHCP state and
+  every package that was not present before installation.
+- Remove restores that saved state and deletes only application-owned runtime
+  packages, including DNS, ACME and generic tools when this app installed them.
+- Installation rollback now restores the saved baseline when package setup
+  fails, instead of leaving a partial dependency stack.
+
 
 - Fixed LuCI Software installs, upgrades and removals losing their rpcd JSON
   response: package lifecycle scripts no longer restart rpcd while apk or opkg

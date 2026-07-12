@@ -40,6 +40,7 @@ install_file 755 luci-ikev2-manager/ikev2-manager.sh /usr/libexec/ikev2-manager
 install_file 755 ikev2-manager-runtime/ikev2-manager-system.sh /usr/libexec/ikev2-manager-system
 install_file 644 ikev2-manager-runtime/lib/actions.sh /usr/libexec/ikev2-manager.d/actions.sh
 install_file 644 ikev2-manager-runtime/lib/package-manager.sh /usr/libexec/ikev2-manager.d/package-manager.sh
+install_file 644 ikev2-manager-runtime/lib/dependency-state.sh /usr/libexec/ikev2-manager.d/dependency-state.sh
 install_file 644 ikev2-manager-runtime/lib/routing.sh /usr/libexec/ikev2-manager.d/routing.sh
 install_file 755 ikev2-manager-runtime/ikev2-health.sh /usr/libexec/ikev2-health
 install_file 755 ikev2-manager-runtime/ikev2-sync-vips.sh /usr/libexec/ikev2-sync-vips
