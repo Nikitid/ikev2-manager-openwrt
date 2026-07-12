@@ -5,7 +5,7 @@ PKG_NAME:=luci-app-ikev2-manager
 # canonical build (scripts/build-ipk.sh). These SDK literals are kept in sync
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
-PKG_VERSION:=1.0.3
+PKG_VERSION:=1.0.4
 PKG_RELEASE:=
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
@@ -208,8 +208,10 @@ define Package/luci-app-ikev2-manager/prerm
 #!/bin/sh
 set -eu
 [ -n "$${IPKG_INSTROOT:-}" ] && exit 0
+[ "$${PKG_UPGRADE:-0}" = 1 ] && exit 0
 case "$${1:-}" in
-	remove) ;;
+	remove | '') ;;
+	upgrade) exit 0 ;;
 	*) exit 0 ;;
 esac
 fail() {
@@ -247,6 +249,8 @@ rm -rf /tmp/luci-modulecache
 rm -f /tmp/ikev2-manager-action.log /tmp/ikev2-system-action.log
 rm -f /tmp/ikev2-manager-deps.log /tmp/ikev2-manager-deps.status
 rm -f /tmp/ikev2-manager-doctor.last /tmp/ikev2-manager-preflight.last
+rm -f /tmp/ikev2-manager-dhcp.before-deps
+rm -rf /tmp/ikev2-manager-dns-packages
 rm -f /tmp/ikev2-domains-community.log /tmp/ikev2-domains-pbr-restart.log
 rm -f /tmp/ikev2-acme.log /tmp/ikev2-acme.status
 rm -f /var/run/ikev2-vip4 /var/run/ikev2-manager-action.status

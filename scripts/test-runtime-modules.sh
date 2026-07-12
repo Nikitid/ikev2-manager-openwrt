@@ -37,7 +37,15 @@ case "$*" in
 	*) ;;
 esac
 EOF
-chmod 755 "$tmp/bin/ip"
+cat >"$tmp/bin/nslookup" <<'EOF'
+#!/bin/sh
+[ "${MOCK_DNS_READY:-0}" = 1 ] || exit 1
+cat <<'ANSWER'
+Name: openwrt.org
+Address: 64.226.122.113
+ANSWER
+EOF
+chmod 755 "$tmp/bin/ip" "$tmp/bin/nslookup"
 
 PATH="$tmp/bin:$PATH"
 export PATH
@@ -45,6 +53,15 @@ export PATH
 . "$root/ikev2-manager-runtime/lib/routing.sh"
 # shellcheck source=/dev/null
 . "$root/ikev2-manager-runtime/lib/package-manager.sh"
+
+MOCK_DNS_READY=1
+export MOCK_DNS_READY
+wait_for_router_dns 127.0.0.1 1 openwrt.org
+MOCK_DNS_READY=0
+if wait_for_router_dns 127.0.0.1 1 openwrt.org; then
+	echo 'router DNS readiness check accepted a failed query' >&2
+	exit 1
+fi
 
 failclosed_check
 if MOCK_FAILCLOSED_MISSING=1 failclosed_check; then
