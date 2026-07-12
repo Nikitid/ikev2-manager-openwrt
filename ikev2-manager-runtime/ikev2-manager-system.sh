@@ -652,10 +652,26 @@ run_remove_deps() {
 
 	deps_status running 'Removing strongSwan, PBR and XFRM packages...'
 	removable='pbr sing-box strongswan strongswan-charon strongswan-swanctl strongswan-mod-aes strongswan-mod-attr strongswan-mod-constraints strongswan-mod-eap-identity strongswan-mod-eap-mschapv2 strongswan-mod-gcm strongswan-mod-gmp strongswan-mod-hmac strongswan-mod-kdf strongswan-mod-kernel-netlink strongswan-mod-md4 strongswan-mod-openssl strongswan-mod-pem strongswan-mod-pkcs1 strongswan-mod-pubkey strongswan-mod-random strongswan-mod-sha2 strongswan-mod-socket-default strongswan-mod-vici strongswan-mod-x509 kmod-xfrm-interface kmod-nft-tproxy kmod-nf-tproxy swanmon'
-	pkg_remove_runtime $removable >/dev/null 2>&1 || true
+	if ! pkg_remove_runtime $removable; then
+		doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
+		deps_status error 'Runtime dependency removal failed; see /tmp/ikev2-manager-deps.log'
+		return 1
+	fi
+	remaining=''
+	for package in $removable; do
+		if pkg_installed "$package"; then
+			remaining="${remaining}${remaining:+ }$package"
+		fi
+	done
+	if [ -n "$remaining" ]; then
+		printf 'Runtime dependency removal left installed packages: %s\n' "$remaining" >&2
+		doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
+		deps_status error 'Some runtime dependencies are still installed; see /tmp/ikev2-manager-deps.log'
+		return 1
+	fi
 
 	doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
-	deps_status ok 'Runtime dependencies removed. Generic tools and ACME were kept.'
+	deps_status ok 'Runtime dependencies removed. DNS packages, generic tools and ACME were kept.'
 }
 
 remove_deps() {

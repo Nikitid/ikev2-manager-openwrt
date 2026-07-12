@@ -52,6 +52,14 @@ pkg_install() {
 }
 
 pkg_remove_runtime() {
+	packages=''
+	for package in "$@"; do
+		if pkg_installed "$package"; then
+			packages="${packages}${packages:+ }$package"
+		fi
+	done
+	[ -n "$packages" ] || return 0
+	set -- $packages
 	case "$(pkg_manager_name)" in
 		opkg) opkg remove --force-depends "$@" ;;
 		apk) apk del "$@" ;;

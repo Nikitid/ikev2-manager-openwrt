@@ -100,6 +100,9 @@ grep -Fq '"pre-deinstall":' "$tmp/package.json" &&
 grep -Fq 'PKG_UPGRADE:-0' "$tmp/package.json" &&
 grep -Fq "remove | '')" "$tmp/package.json" ||
 	fail 'built APK does not contain the guarded removal cleanup'
+if grep -Fq '/etc/init.d/rpcd restart' "$tmp/package.json"; then
+	fail 'built APK restarts rpcd during its package transaction'
+fi
 
 cp "$public_key" "$output/ikev2-manager-release.pem"
 cp "$root/scripts/install-openwrt25.sh" "$output/install-openwrt25.sh"

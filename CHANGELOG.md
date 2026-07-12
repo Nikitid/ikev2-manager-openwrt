@@ -4,6 +4,18 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
+## 1.0.5 - 2026-07-12
+
+- Fixed LuCI Software installs, upgrades and removals losing their rpcd JSON
+  response: package lifecycle scripts no longer restart rpcd while apk or opkg
+  is executing.
+- Fixed runtime dependency removal on apk: absent optional modules are filtered
+  before `apk del`, and the action now reports a failure instead of a false
+  success when package removal does not complete.
+- Documented the deliberate safety boundary for dependency removal: DNS
+  packages, generic shared tools and ACME remain installed to avoid disrupting
+  router DNS/DHCP or unrelated services.
+
 ## 1.0.4 - 2026-07-12
 
 - Fixed an intentionally empty managed DNS fallback being replaced in LuCI by
