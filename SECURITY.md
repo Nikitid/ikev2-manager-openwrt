@@ -4,9 +4,11 @@
 
 Only the latest published release is supported with security fixes.
 
-The currently supported router platform is official OpenWrt 24.10.x with
-firewall4. Vendor firmware, snapshots and OpenWrt 25.12+ are unsupported until
-they are explicitly listed in the compatibility matrix.
+The stable router platform is official OpenWrt 24.10.x with firewall4.
+OpenWrt 25.12.x support is experimental and currently limited to the
+`mediatek/filogic` target with `aarch64_cortex-a53`, as listed in the project
+compatibility documentation. Vendor firmware, snapshots, firewall3 and other
+OpenWrt release/target combinations are unsupported.
 
 ## Reporting a vulnerability
 

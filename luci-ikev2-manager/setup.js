@@ -109,6 +109,39 @@ function validateAddr(addr) {
 		/^[0-9.]+(\/[0-9]{1,2})?$/.test(addr);
 }
 
+function domainRuntimeStatus(value) {
+	if (value.domain_engine !== 'fakeip') {
+		return {
+			label: _('Legacy mode active'),
+			tone: 'neutral',
+			detail: _('PBR currently classifies selected services by their resolved public IP addresses. Configure the engine on the Policy Routing page.')
+		};
+	}
+	if (value.domain_healthy === 'yes') {
+		return {
+			label: _('Reliable mode active'), tone: 'good',
+			detail: _('sing-box FakeIP and nftables TProxy classify selected services. Configure the engine on the Policy Routing page.')
+		};
+	}
+	var detail;
+	if (value.domain_state === 'running')
+		detail = _('Reliable domain routing is still updating.');
+	else if (value.domain_service !== 'running')
+		detail = _('The reliable domain-router service is stopped.');
+	else if (value.domain_dnsmasq_upstream !== '127.0.0.42')
+		detail = _('dnsmasq is not using the FakeIP resolver.');
+	else if (value.domain_dnsmasq_cache !== '0')
+		detail = _('dnsmasq caching is still enabled in reliable mode.');
+	else if (value.domain_nft !== 'active')
+		detail = _('Reliable-mode nftables rules are missing.');
+	else if (value.domain_rule !== 'active')
+		detail = _('Reliable-mode policy routing rule is missing.');
+	else
+		detail = value.domain_message ? _(value.domain_message) :
+			_('Reliable domain routing failed a runtime health check.');
+	return { label: _('Reliable mode degraded'), tone: 'bad', detail: detail };
+}
+
 function checkRows(doctor) {
 	var labels = {
 		firmware_source: _('Firmware source'),
@@ -327,12 +360,7 @@ return view.extend({
 			_('Install runtime dependencies') ]);
 		var removeDeps = E('button', { 'class': 'cbi-button cbi-button-remove' }, [
 			_('Remove runtime dependencies') ]);
-		var reliable = value.domain_engine === 'fakeip';
-		var domainHealthy = reliable && value.domain_healthy === 'yes';
-		var domainTone = reliable ? (domainHealthy ? 'good' : 'bad') : 'neutral';
-		var domainLabel = reliable ?
-			(domainHealthy ? _('Reliable mode active') : _('Reliable mode needs attention')) :
-			_('Legacy mode active');
+		var domainRuntime = domainRuntimeStatus(value);
 
 		// ── Network selectors ────────────────────────────────────────────
 		var protectedSet = {};
@@ -444,12 +472,10 @@ return view.extend({
 						E('span', { 'class': 'ikev2-health-copy' }, [
 							E('strong', {}, [ _('Domain routing engine') ]),
 							E('span', { 'class': 'ikev2-toggle-sub' }, [
-								reliable ?
-									_('sing-box FakeIP and nftables TProxy classify selected services. Configure the engine on the Policy Routing page.') :
-									_('PBR currently classifies selected services by their resolved public IP addresses. Configure the engine on the Policy Routing page.')
+								domainRuntime.detail
 							])
 						]),
-						common.pill(domainLabel, domainTone)
+						common.pill(domainRuntime.label, domainRuntime.tone)
 					])
 				]),
 				common.section(_('Runtime dependencies'),

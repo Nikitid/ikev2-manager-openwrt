@@ -74,6 +74,7 @@ drop_reclassified_connections() {
 		/usr/libexec/ikev2-sync-vips
 		/etc/init.d/pbr restart
 		/etc/init.d/pbr running
+		wait_for_router_dns 127.0.0.1 20 openwrt.org
 		/usr/libexec/ikev2-manager-system failclosed-check
 		ensure_forward_chain
 		/etc/init.d/ikev2-xfrm start

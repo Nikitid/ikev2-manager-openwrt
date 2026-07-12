@@ -1450,10 +1450,14 @@ show_config() {
 	printf 'block_dot=%s\n' "$(getv globals block_dot)"
 	printf 'source_include_vpn=%s\n' "$(defaultv globals source_include_vpn 1)"
 	printf 'server_enabled=%s\n' "$(getv server enabled)"
-	printf 'domain_engine=%s\n' "$(getv domains engine)"
-	printf 'domain_healthy=%s\n' "$(
-		printf '%s\n' "$domain_status" | sed -n 's/^healthy=//p' | tail -n1
-	)"
+	for field in engine service dnsmasq_upstream dnsmasq_cache nft rule healthy state message; do
+		if [ "$field" = engine ]; then
+			value="$(getv domains engine)"
+		else
+			value="$(printf '%s\n' "$domain_status" | sed -n "s/^$field=//p" | tail -n1)"
+		fi
+		printf 'domain_%s=%s\n' "$field" "$value"
+	done
 	case "$(ip -6 route show default 2>/dev/null | head -1)" in
 		*unreachable*) printf 'ipv6_failfast=active\n' ;;
 		'') printf 'ipv6_failfast=off\n' ;;
@@ -1601,12 +1605,19 @@ run_action() {
 			fi
 			;;
 		dns-set)
+			dns_error_file="/tmp/ikev2-dns-action-$id.error"
+			rm -f "$dns_error_file"
 			action_status "$id" running 'Applying and testing DNS settings...'
-			if ( dns_apply "$@" ); then
+			if ( dns_apply "$@" ) 2>"$dns_error_file"; then
 				action_status "$id" ok 'DNS settings applied.'
 			else
-				action_status "$id" error 'DNS apply failed; previous resolver configuration was restored.'
+				cat "$dns_error_file" >&2 2>/dev/null || true
+				dns_error="$(tr -d '\r' <"$dns_error_file" 2>/dev/null | tail -n1)"
+				[ -n "$dns_error" ] ||
+					dns_error='DNS apply failed; check /tmp/ikev2-system-action.log.'
+				action_status "$id" error "$dns_error"
 			fi
+			rm -f "$dns_error_file"
 			;;
 		*)
 			action_status "$id" error 'Unknown router action.'
