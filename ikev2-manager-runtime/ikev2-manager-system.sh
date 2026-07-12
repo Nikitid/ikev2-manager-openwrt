@@ -464,7 +464,6 @@ curl
 libcurl4
 ca-bundle
 conntrack
-jsonfilter
 swanmon
 acme
 luci-app-acme
