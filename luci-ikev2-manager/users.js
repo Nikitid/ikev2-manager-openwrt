@@ -2,6 +2,7 @@
 'require view';
 'require fs';
 'require ui';
+'require poll';
 'require ikev2-manager.shared as common';
 
 var helper = '/usr/libexec/ikev2-manager';
@@ -36,38 +37,39 @@ function sessionsByUser(sas) {
 	return result;
 }
 
-function runUserAction(button, args, success, opts) {
+function loadUsers() {
+	return Promise.all([
+		fs.exec(helper, [ 'users-show' ]),
+		L.resolveDefault(fs.exec('/usr/sbin/swanmon', [ 'list-sas' ]), { stdout: '' })
+	]);
+}
+
+function runUserAction(button, args, result, success, opts) {
 	opts = opts || {};
 	return common.runAction({
 		button: button,
+		result: result,
 		busy: opts.busy || _('Saving...'),
+		success: success,
 		run: function() {
-			return common.execChecked(helper, args, _('Operation failed')).then(function() {
-				ui.hideModal();
-				ui.addNotification(null, E('p', {}, [ success ]), 'info');
-				window.dispatchEvent(new Event('ikev2-users-updated'));
-			});
+			return common.execChecked(helper, args, _('Operation failed'));
 		},
-		onError: function(message) {
-			ui.addNotification(null, E('p', {}, [
-				(opts.errMessage || _('Unable to save the VPN user: %s')).format(message)
-			]), 'danger');
-		}
+		onSuccess: opts.onSuccess
 	});
 }
 
-function runUserSecretAction(button, action, user, password, success) {
+function runUserSecretAction(button, action, user, password, result, success, onSuccess) {
 	var payload = [ action, user, password ].join('\n') + '\n';
 	return fs.write('/var/run/ikev2-manager-user.in', payload, 384 /* 0600 */).then(function() {
-		return runUserAction(button, [ 'user-secret-set' ], success);
+		return runUserAction(button, [ 'user-secret-set' ], result, success, {
+			onSuccess: onSuccess
+		});
 	}, function(error) {
-		ui.addNotification(null, E('p', {}, [
-			_('Unable to save the VPN user: %s').format(error.message || error)
-		]), 'danger');
+		result.err(_('Unable to save the VPN user: %s').format(error.message || error));
 	});
 }
 
-function passwordDialog(title, username, action, includeUsername) {
+function passwordDialog(title, username, action, includeUsername, pageResult, refresh) {
 	var name = E('input', {
 		'type': 'text',
 		'class': 'cbi-input-text',
@@ -82,6 +84,7 @@ function passwordDialog(title, username, action, includeUsername) {
 		'autocomplete': 'off'
 	});
 	var fields = [];
+	var dialogResult = common.inlineResult();
 
 	if (includeUsername) {
 		fields.push(common.fieldLabel(_('Username'), _('Letters, digits, dot, dash and underscore.')));
@@ -94,25 +97,38 @@ function passwordDialog(title, username, action, includeUsername) {
 		E('div', { 'class': 'ikev2-page' }, [
 			common.styles(),
 			E('div', { 'class': 'ikev2-form-grid' }, fields),
-			E('div', { 'class': 'right', 'style': 'margin-top:1.2rem;' }, [
-				E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-				' ',
+			E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1.2rem;' }, [
+				dialogResult.node,
 				E('button', {
-					'class': 'btn cbi-button-positive',
+					'class': 'cbi-button',
+					'type': 'button',
+					'click': ui.hideModal
+				}, [ _('Cancel') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-positive',
+					'type': 'button',
 					'click': function(ev) {
 						var button = ev.currentTarget;
 						var user = includeUsername ? name.value.trim() : username;
 						if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(user)) {
-							ui.addNotification(null, E('p', {}, [ _('Invalid username.') ]), 'warning');
+							dialogResult.err(_('Invalid username.'));
 							return;
 						}
 						if (!password.value) {
-							ui.addNotification(null, E('p', {}, [ _('Password is required.') ]), 'warning');
+							dialogResult.err(_('Password is required.'));
 							return;
 						}
 						return runUserSecretAction(button,
 							action === 'user-add' ? 'add' : 'password', user, password.value,
-							includeUsername ? _('VPN user added.') : _('Password changed.'));
+							dialogResult,
+							includeUsername ? _('VPN user added.') : _('Password changed.'),
+							function() {
+								return refresh().then(function() {
+									ui.hideModal();
+									pageResult.ok(includeUsername ?
+										_('VPN user added.') : _('Password changed.'));
+								});
+							});
 					}
 				}, [ _('Save') ])
 			])
@@ -126,10 +142,7 @@ return view.extend({
 		return L.resolveDefault(fs.stat('/usr/sbin/swanmon'), null).then(function(ready) {
 			if (!ready)
 				return { ready: false };
-			return Promise.all([
-				fs.exec(helper, [ 'users-show' ]),
-				L.resolveDefault(fs.exec('/usr/sbin/swanmon', [ 'list-sas' ]), { stdout: '' })
-			]).then(function(d) { d.ready = true; return d; });
+			return loadUsers().then(function(d) { d.ready = true; return d; });
 		});
 	},
 
@@ -137,14 +150,14 @@ return view.extend({
 		if (!data.ready)
 			return E([ common.styles(), common.gate(_('VPN Users'),
 				_('Manage inbound IKEv2 credentials and current sessions. Traffic counters reset when a session reconnects.')) ]);
-		var users = (data[0].stdout || '').replace(/\r/g, '').split('\n')
-			.filter(Boolean)
-			.map(function(line) { return { name: line }; });
-		var sessions = sessionsByUser(common.parseSwanmon(data[1]));
-		var online = Object.keys(sessions).reduce(function(total, user) {
-			return total + sessions[user].length;
-		}, 0);
-		var userCards = [];
+		var users = [];
+		var sessions = {};
+		var online = 0;
+		var list = E('div', {});
+		var userCount = common.pill('', 'info');
+		var onlineCount = common.pill('', 'neutral');
+		var actionResult = common.inlineResult();
+		var disconnectAll;
 
 		function actionButton(icon, label, className, handler) {
 			return E('button', {
@@ -156,9 +169,17 @@ return view.extend({
 			}, [ common.icon(icon), E('span', {}, [ label ]) ]);
 		}
 
-		users.forEach(function(entry) {
-			var active = sessions[entry.name] || [];
-			var sessionNode = active.length ? E('div', { 'class': 'ikev2-session-list' },
+		function refresh() {
+			return loadUsers().then(function(next) {
+				setData(next);
+			});
+		}
+
+		function renderList() {
+			var userCards = [];
+			users.forEach(function(entry) {
+				var active = sessions[entry.name] || [];
+				var sessionNode = active.length ? E('div', { 'class': 'ikev2-session-list' },
 				active.map(function(session) {
 					var disconnectLabel = _('Disconnect');
 					return E('div', { 'class': 'ikev2-session' }, [
@@ -189,18 +210,19 @@ return view.extend({
 							])
 						]),
 						actionButton('disconnect', disconnectLabel, 'cbi-button-neutral', function(ev) {
-							runUserAction(ev.currentTarget,
+							return runUserAction(ev.currentTarget,
 								[ 'disconnect', String(session.id) ],
+								actionResult,
 								_('Session disconnected.'),
 								{ busy: _('Disconnecting...'),
-								  errMessage: _('Unable to disconnect the session: %s') });
+								  onSuccess: refresh });
 						})
 					]);
 				})) : E('div', { 'class': 'ikev2-session-meta' }, [ _('No active sessions') ]);
 
-			var changeLabel = _('Change password');
-			var deleteLabel = _('Delete');
-			userCards.push(E('div', { 'class': 'ikev2-user-card' }, [
+				var changeLabel = _('Change password');
+				var deleteLabel = _('Delete');
+				userCards.push(E('div', { 'class': 'ikev2-user-card' }, [
 				E('div', { 'class': 'ikev2-user-identity' }, [
 					E('span', { 'class': 'ikev2-user-avatar' }, [ entry.name.slice(0, 1) || '?' ]),
 					E('div', { 'style': 'min-width:0' }, [
@@ -215,34 +237,58 @@ return view.extend({
 				E('div', { 'class': 'ikev2-user-actions' }, [
 					actionButton('key', changeLabel, 'cbi-button-edit', function() {
 							passwordDialog(_('Change password'), entry.name,
-								'user-password', false);
+								'user-password', false, actionResult, refresh);
 						}),
 					actionButton('trash', deleteLabel, 'cbi-button-remove', function(ev) {
 							if (!window.confirm(_('Delete user %s?').format(entry.name)))
 								return;
-							runUserAction(ev.currentTarget,
+							return runUserAction(ev.currentTarget,
 								[ 'user-delete', entry.name ],
+								actionResult,
 								_('VPN user deleted.'),
 								{ busy: _('Deleting...'),
-								  errMessage: _('Unable to delete the VPN user: %s') });
+								  onSuccess: refresh });
 						})
 				])
-			]));
-		});
+				]));
+			});
+			list.replaceChildren(users.length ?
+				E('div', { 'class': 'ikev2-user-list' }, userCards) :
+				E('div', { 'class': 'ikev2-empty' }, [ _('No VPN users configured.') ]));
+		}
+
+		function setData(next) {
+			users = ((next[0] && next[0].stdout) || '').replace(/\r/g, '').split('\n')
+				.filter(Boolean).map(function(line) { return { name: line }; });
+			sessions = sessionsByUser(common.parseSwanmon(next[1] || { stdout: '' }));
+			online = Object.keys(sessions).reduce(function(total, user) {
+				return total + sessions[user].length;
+			}, 0);
+			common.setPill(userCount, _('%d users').format(users.length), 'info');
+			common.setPill(onlineCount, _('%d online').format(online), online ? 'good' : 'neutral');
+			if (disconnectAll) {
+				if (disconnectAll.dataset.busy === '1')
+					disconnectAll.dataset.idleDisabled = online ? '0' : '1';
+				else
+					disconnectAll.disabled = !online;
+			}
+			renderList();
+		}
 
 		var add = actionButton('addUser', _('Add user'), 'cbi-button-add', function() {
-				passwordDialog(_('Add VPN user'), '', 'user-add', true);
+				passwordDialog(_('Add VPN user'), '', 'user-add', true, actionResult, refresh);
 			});
-		var disconnectAll = actionButton('disconnectAll', _('Disconnect all'),
+		disconnectAll = actionButton('disconnectAll', _('Disconnect all'),
 			'cbi-button-negative', function(ev) {
 				if (!window.confirm(_('Disconnect all active VPN sessions?')))
 					return;
-				runUserAction(ev.currentTarget, [ 'disconnect-all' ],
+				return runUserAction(ev.currentTarget, [ 'disconnect-all' ], actionResult,
 					_('All sessions disconnected.'),
 					{ busy: _('Disconnecting...'),
-					  errMessage: _('Unable to disconnect sessions: %s') });
+					  onSuccess: refresh });
 			});
-		disconnectAll.disabled = !online;
+		setData(data);
+		poll.add(refresh, 5);
 
 		return E([
 			common.styles(),
@@ -255,18 +301,16 @@ return view.extend({
 						E('div', { 'class': 'ikev2-note', 'style': 'margin-bottom:1rem' }, [
 							_('Online shows only IKEv2 sessions terminating on this router. A device connected to the outbound VPS tunnel is shown on the Outbound Tunnel page and is not counted here.')
 						]),
-						users.length ? E('div', { 'class': 'ikev2-user-list' }, userCards) :
-						E('div', { 'class': 'ikev2-empty' }, [
-							_('No VPN users configured.')
-						]),
+						list,
 						E('div', { 'class': 'ikev2-actions end ikev2-save-bar' }, [
+							actionResult.node,
 							disconnectAll,
 							add
 						])
 					]),
 					E('div', { 'class': 'ikev2-actions' }, [
-						common.pill(_('%d users').format(users.length), 'info'),
-						common.pill(_('%d online').format(online), online ? 'good' : 'neutral')
+						userCount,
+						onlineCount
 					]))
 			])
 		]);

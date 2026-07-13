@@ -16,6 +16,9 @@ find luci-ikev2-domains luci-ikev2-manager ikev2-manager-runtime scripts \
 find luci-ikev2-domains luci-ikev2-manager \
 	-type f -name '*.js' -exec node --check {} \;
 
+./scripts/check-luci-ui-contract.sh
+node ./scripts/test-luci-users-ui.js
+
 ./scripts/test-package-lifecycle.sh
 
 ./scripts/test-runtime-modules.sh

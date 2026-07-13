@@ -1,0 +1,214 @@
+'use strict';
+
+const fsNode = require('fs');
+const assert = require('assert');
+
+if (!String.prototype.format) {
+	String.prototype.format = function() {
+		let i = 0;
+		const args = arguments;
+		return this.replace(/%[sd]/g, () => String(args[i++]));
+	};
+}
+
+class Node {
+	constructor(tag, attrs, children) {
+		this.tag = tag;
+		this.attrs = attrs || {};
+		this.children = [];
+		this.style = {};
+		this.dataset = {};
+		this.disabled = false;
+		this.value = this.attrs.value || '';
+		this.checked = this.attrs.checked != null;
+		this.className = this.attrs.class || '';
+		this._text = '';
+		this.classList = {
+			toggle: (name, enabled) => {
+				const names = this.className.split(/\s+/).filter(Boolean);
+				const found = names.indexOf(name);
+				if (enabled && found < 0) names.push(name);
+				if (!enabled && found >= 0) names.splice(found, 1);
+				this.className = names.join(' ');
+			}
+		};
+		this.replaceChildren.apply(this, children || []);
+	}
+
+	appendChild(child) {
+		if (child == null || child === '') return;
+		this.children.push(child instanceof Node ? child : String(child));
+	}
+
+	replaceChildren() {
+		this.children = [];
+		Array.prototype.slice.call(arguments).flat().forEach(child => this.appendChild(child));
+	}
+
+	addEventListener(type, handler) { this.attrs[type] = handler; }
+	setAttribute(name, value) { this.attrs[name] = value; }
+	removeAttribute(name) { delete this.attrs[name]; }
+	focus() {}
+
+	get textContent() {
+		return this._text + this.children.map(child =>
+			child instanceof Node ? child.textContent : child).join('');
+	}
+
+	set textContent(value) {
+		this._text = value == null ? '' : String(value);
+		this.children = [];
+	}
+
+	get innerHTML() { return this.textContent; }
+	set innerHTML(value) { this.textContent = value; }
+}
+
+function E(tag, attrs, children) {
+	if (Array.isArray(tag)) return new Node('fragment', {}, tag);
+	if (typeof tag === 'string' && tag.charAt(0) === '<') return new Node('svg', {}, []);
+	return new Node(tag, attrs, children);
+}
+
+function walk(node, fn) {
+	if (!(node instanceof Node)) return;
+	fn(node);
+	node.children.forEach(child => walk(child, fn));
+}
+
+function find(root, tag, text) {
+	let found;
+	walk(root, node => {
+		if (!found && node.tag === tag && (!text || node.textContent.trim() === text))
+			found = node;
+	});
+	return found;
+}
+
+function inlineResult() {
+	const node = E('span', { class: 'ikev2-result' }, []);
+	function set(kind, message) {
+		node.className = 'ikev2-result ' + kind;
+		node.style.display = '';
+		node.textContent = message;
+	}
+	return {
+		node,
+		busy: message => set('busy', message),
+		ok: message => set('ok', message),
+		warn: message => set('warn', message),
+		err: message => set('err', message),
+		clear: () => { node.style.display = 'none'; }
+	};
+}
+
+function setBusy(button, busy) {
+	if (busy) {
+		button.dataset.idleDisabled = button.disabled ? '1' : '0';
+		button.dataset.busy = '1';
+		button.disabled = true;
+	}
+	else {
+		delete button.dataset.busy;
+		button.disabled = button.dataset.idleDisabled === '1';
+		delete button.dataset.idleDisabled;
+	}
+}
+
+let users = [];
+let userInput = '';
+let modal = null;
+const fileApi = {
+	stat: () => Promise.resolve({}),
+	write: (path, payload) => { userInput = payload; return Promise.resolve(); },
+	exec: (path, args) => {
+		if (path === '/usr/sbin/swanmon') return Promise.resolve({ stdout: '[]' });
+		if (args[0] === 'users-show') return Promise.resolve({ stdout: users.join('\n') + (users.length ? '\n' : '') });
+		if (args[0] === 'user-secret-set') {
+			const fields = userInput.split('\n');
+			if (fields[0] === 'add') users.push(fields[1]);
+			return Promise.resolve({ stdout: '' });
+		}
+		if (args[0] === 'user-delete') {
+			users = users.filter(user => user !== args[1]);
+			return Promise.resolve({ stdout: '' });
+		}
+		return Promise.resolve({ stdout: '' });
+	}
+};
+
+const common = {
+	parseSwanmon: response => JSON.parse(response.stdout || '[]'),
+	formatDuration: value => String(value || 0),
+	formatBytes: value => String(value || 0),
+	styles: () => E('style', {}, []),
+	icon: () => E('svg', {}, []),
+	fieldLabel: title => E('label', {}, [ title ]),
+	inlineResult,
+	pill: (text, tone) => E('span', { class: 'ikev2-pill ' + tone }, [ text ]),
+	setPill: (node, text, tone) => { node.className = 'ikev2-pill ' + tone; node.textContent = text; },
+	header: (title, subtitle) => E('header', {}, [ title, subtitle ]),
+	section: (title, description, content, actions) => E('section', {}, [ title, description, content, actions ]),
+	gate: () => E('div', {}, []),
+	execChecked: (path, args) => fileApi.exec(path, args).then(response => {
+		if (response.code) throw new Error(response.stderr || response.stdout || 'failed');
+		return response;
+	}),
+	runAction: options => {
+		setBusy(options.button, true);
+		if (options.result) options.result.busy(options.busy);
+		return Promise.resolve().then(options.run).then(value => {
+			if (options.success && options.result) options.result.ok(options.success);
+			return options.onSuccess ? Promise.resolve(options.onSuccess(value)).then(() => value) : value;
+		}).catch(error => {
+			if (options.result) options.result.err(error.message);
+			return null;
+		}).finally(() => setBusy(options.button, false));
+	}
+};
+
+const ui = {
+	showModal: (title, nodes) => { modal = E('div', {}, nodes); },
+	hideModal: () => { modal = null; }
+};
+const poll = { add: () => {} };
+const L = { resolveDefault: (promise, fallback) => Promise.resolve(promise).catch(() => fallback) };
+const windowMock = { confirm: () => true, setTimeout, Event: function() {} };
+const documentMock = {};
+const view = { extend: object => object };
+const translate = value => value;
+
+const source = fsNode.readFileSync('luci-ikev2-manager/users.js', 'utf8');
+const factory = new Function('view', 'fs', 'ui', 'poll', 'common', 'L', 'E', '_', 'window', 'document', source);
+const page = factory(view, fileApi, ui, poll, common, L, E, translate, windowMock, documentMock);
+
+(async () => {
+	const data = await page.load();
+	const root = page.render(data);
+	assert(root.textContent.includes('No VPN users configured.'));
+
+	await find(root, 'button', 'Add user').attrs.click({ currentTarget: find(root, 'button', 'Add user') });
+	const inputs = [];
+	walk(modal, node => { if (node.tag === 'input') inputs.push(node); });
+	inputs[0].value = 'test-user';
+	inputs[1].value = 'secret';
+	const save = find(modal, 'button', 'Save');
+	await save.attrs.click({ currentTarget: save });
+
+	assert.strictEqual(modal, null, 'successful add closes the modal');
+	assert(root.textContent.includes('test-user'), 'new user appears without a page reload');
+	assert(root.textContent.includes('1 users'), 'user count updates without a page reload');
+	assert(root.textContent.includes('VPN user added.'), 'success is shown in the local action bar');
+
+	const remove = find(root, 'button', 'Delete');
+	await remove.attrs.click({ currentTarget: remove });
+	assert(root.textContent.includes('No VPN users configured.'), 'deleted user disappears without a page reload');
+	assert(root.textContent.includes('0 users'), 'user count updates after deletion');
+	assert.strictEqual(find(root, 'button', 'Disconnect all').disabled, true,
+		'disconnect-all stays disabled when refreshed state has no sessions');
+
+	console.log('luci users UI state refresh tests OK');
+})().catch(error => {
+	console.error(error);
+	process.exit(1);
+});

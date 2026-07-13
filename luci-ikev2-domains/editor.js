@@ -1,7 +1,6 @@
 'use strict';
 'require view';
 'require fs';
-'require ui';
 'require ikev2-manager.shared as common';
 
 var domainFile    = '/etc/pbr-ikev2-domains.txt';
@@ -304,7 +303,7 @@ return view.extend({
 		]);
 	},
 
-	doSave: function(result) {
+	doSave: function(result, onUpdated) {
 		var textarea   = document.querySelector('#ikev2-domain-list');
 		var addressTextarea = document.querySelector('#ikev2-address-list');
 		var domains;
@@ -312,7 +311,7 @@ return view.extend({
 		var selected = Object.keys(serviceSelection).sort();
 
 		if (!textarea || !addressTextarea) {
-			result.err(_('Editor not ready — please reload the page.'));
+			result.err(_('Editor is not ready.'));
 			return Promise.reject(new Error('textarea-missing'));
 		}
 
@@ -348,6 +347,8 @@ return view.extend({
 				})
 				.then(function(st) {
 					updateStatusLine(st);
+					if (onUpdated)
+						onUpdated(st);
 
 					if (!st) {
 						result.warn(_('Saved; rebuild continues in the background.'));
@@ -369,12 +370,16 @@ return view.extend({
 	renderDevicesTab: function(initialDump, systemConfig, networksDump) {
 		var entries  = parseDeviceDump((initialDump || {}).stdout || '');
 		var tableWrap = E('div', {});
+		var coverageResult = common.inlineResult();
+		var deviceResult = common.inlineResult();
 		var protectedNetworks = (systemConfig.source_interfaces || '').trim()
 			.split(/\s+/).filter(Boolean);
 		function coverageAction(button, action, name) {
 			return common.runJob({
 				button: button,
+				result: coverageResult,
 				busy: _('Applying...'),
+				success: _('Saved'),
 				failure: _('Operation failed'),
 				startPath: systemHelper,
 				startArgs: [ 'coverage-async', action, name ],
@@ -383,51 +388,33 @@ return view.extend({
 				timeout: 120000,
 				timeoutMessage: _('The operation continues in the background. You can use the button again.'),
 				onSuccess: function(st) {
-					ui.addNotification(null, E('p', {}, [
-						st && st.state === 'timeout' ?
-							_('The operation continues in the background. You can use the button again.') :
-							_('Saved.') ]), st && st.state === 'timeout' ? 'warning' : 'info');
-					if (!st || st.state !== 'timeout')
-						window.dispatchEvent(new Event('ikev2-coverage-updated'));
-				},
-				onError: function(message) {
-					ui.addNotification(null, E('p', {}, [ message ]), 'danger');
+					if (st && st.state !== 'timeout') {
+						if (action === 'add' && protectedNetworks.indexOf(name) < 0)
+							protectedNetworks.push(name);
+						if (action === 'remove')
+							protectedNetworks = protectedNetworks.filter(function(item) {
+								return item !== name;
+							});
+						renderCoverage();
+					}
 				}
 			});
 		}
-
-		var coverageTags = protectedNetworks.map(function(name) {
-			return E('span', { 'class': 'ikev2-tag' }, [
-				name,
-				E('button', {
-					'class': 'ikev2-tag-x',
-					'title': _('Remove'),
-					'aria-label': _('Remove'),
-					'click': function(ev) {
-						coverageAction(ev.currentTarget, 'remove', name);
-					}
-				}, [ '\u00d7' ])
-			]);
-		});
 
 		function doAction(button, cmd, addr, extra, onSuccess) {
 			var args = extra != null ? [ cmd, addr, extra ] : [ cmd, addr ];
 			return common.runAction({
 				button: button,
+				result: deviceResult,
 				busy: _('Saving...'),
+				success: _('Saved'),
 				run: function() {
 					return common.execChecked(devicesHelper, args, _('Operation failed'))
 						.then(function() {
-							ui.addNotification(null, E('p', {}, [
-								_('Saved. Domain routing is updating in the background.')
-							]), 'info');
 							return fs.exec(devicesHelper, [ 'dump' ]);
 						}).then(function(r) {
 							showTable(parseDeviceDump((r || {}).stdout || ''));
 						});
-				},
-				onError: function(message) {
-					ui.addNotification(null, E('p', {}, [ message ]), 'danger');
 				},
 				onSuccess: onSuccess
 			});
@@ -514,19 +501,38 @@ return view.extend({
 		showTable(entries);
 
 		/* ── Network pick-list (add a router subnet to domain routing) ──── */
-		var netOptions = ((networksDump || {}).stdout || '').replace(/\r/g, '').split('\n')
+		var allNetOptions = ((networksDump || {}).stdout || '').replace(/\r/g, '').split('\n')
 			.map(function(line) {
 				var eq = line.indexOf('=');
 				return eq > 0 ? { name: line.slice(0, eq), cidr: line.slice(eq + 1) } : null;
-			}).filter(Boolean)
-			.filter(function(o) { return protectedNetworks.indexOf(o.name) === -1; });
+			}).filter(Boolean);
 
-		var networkSelect = E('select', { 'class': 'cbi-input-select' },
-			netOptions.length
-				? netOptions.map(function(o) {
+		var coverageTags = E('div', { 'class': 'ikev2-tags', 'style': 'margin-bottom:.9rem;' });
+		var networkSelect = E('select', { 'class': 'cbi-input-select' });
+
+		function renderCoverage() {
+			coverageTags.replaceChildren.apply(coverageTags, protectedNetworks.map(function(name) {
+				return E('span', { 'class': 'ikev2-tag' }, [
+					name,
+					E('button', {
+						'class': 'ikev2-tag-x',
+						'title': _('Remove'),
+						'aria-label': _('Remove'),
+						'click': function(ev) {
+							coverageAction(ev.currentTarget, 'remove', name);
+						}
+					}, [ '\u00d7' ])
+				]);
+			}));
+			var available = allNetOptions.filter(function(o) {
+				return protectedNetworks.indexOf(o.name) === -1;
+			});
+			networkSelect.replaceChildren.apply(networkSelect, available.length ?
+				available.map(function(o) {
 					return E('option', { 'value': o.name }, [ o.name + ' — ' + o.cidr ]);
-				})
-				: [ E('option', { 'value': '' }, [ _('No networks available') ]) ]);
+				}) : [ E('option', { 'value': '' }, [ _('No networks available') ]) ]);
+		}
+		renderCoverage();
 
 		var addNetworkBtn = E('button', {
 			'class': 'cbi-button cbi-button-add',
@@ -554,7 +560,7 @@ return view.extend({
 			'click': function() {
 				var addr = overrideInput.value.trim();
 				if (!validateAddr(addr)) {
-					ui.addNotification(null, E('p', {}, [ _('Invalid address') ]), 'warning');
+					deviceResult.err(_('Invalid address'));
 					return;
 				}
 				doAction(addOverrideBtn, 'add-override', addr, modeSelect.value,
@@ -577,10 +583,10 @@ return view.extend({
 					]),
 					common.pill(_('Active'), 'good')
 				]),
-				coverageTags.length
-					? E('div', { 'class': 'ikev2-tags', 'style': 'margin-bottom:.9rem;' }, coverageTags)
-					: '',
-				E('div', { 'class': 'ikev2-inline-form' }, [ networkSelect, addNetworkBtn ])
+				coverageTags,
+				E('div', { 'class': 'ikev2-inline-form' }, [
+					networkSelect, coverageResult.node, addNetworkBtn
+				])
 			]),
 			E('h4', { 'style': 'margin:1.2rem 0 .5rem;' },
 				[ _('Custom device rules') ]),
@@ -591,7 +597,7 @@ return view.extend({
 				E('p', { 'class': 'cbi-section-descr' },
 					[ _('Per-device exception inserted before the base PBR rule.') ]),
 				E('div', { 'class': 'ikev2-inline-form' },
-					[ overrideInput, modeSelect, addOverrideBtn ])
+					[ overrideInput, modeSelect, deviceResult.node, addOverrideBtn ])
 			])
 		]);
 	},
@@ -615,6 +621,18 @@ return view.extend({
 		var activeDomains = (data[5] || '').split('\n').filter(function(line) {
 			return line.trim() && line.trim().charAt(0) !== '#';
 		}).length;
+		var policyPill = common.pill('', 'neutral');
+		function updatePolicyStatus(st) {
+			if (st && st.state === 'error') {
+				common.setPill(policyPill, _('Policy error'), 'bad');
+				return;
+			}
+			var active = st ? st.state === 'ok' :
+				(statusData.state === 'ok' || activeDomains > 0);
+			common.setPill(policyPill, active ? _('Policy active') : _('Policy empty'),
+				active ? 'good' : 'warn');
+		}
+		updatePolicyStatus(null);
 		var catalogResult = data[3] || {};
 		var services = (catalogResult.stdout || '').trim().split(/\s+/)
 			.filter(function(name) {
@@ -743,7 +761,7 @@ return view.extend({
 				result: saveResult,
 				busy: _('Saving...'),
 				run: function() {
-					return self.doSave(saveResult);
+					return self.doSave(saveResult, updatePolicyStatus);
 				}
 			});
 		});
@@ -753,9 +771,7 @@ return view.extend({
 			E('div', { 'class': 'ikev2-page' }, [
 				common.header(_('Policy Routing'),
 					_('Build the IPv4 VPN policy from curated services, custom destinations and per-device modes.'),
-					common.pill(statusData.state === 'ok' || activeDomains > 0 ?
-						_('Policy active') : _('Policy empty'),
-						statusData.state === 'ok' || activeDomains > 0 ? 'good' : 'warn')),
+					policyPill),
 				domainsContent,
 				E('div', { 'class': 'ikev2-note warn' }, [
 					_('Clients must use router DNS. Plain DNS is redirected and DoT is blocked, but browser DoH and Apple Private Relay must still be disabled for deterministic domain routing.')

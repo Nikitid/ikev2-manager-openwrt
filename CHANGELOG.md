@@ -4,7 +4,14 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
-## 1.0.5 - 2026-07-12
+## 1.1.0-rc1 - 2026-07-13
+
+- Standardized all LuCI actions on local inline status feedback instead of
+  global notifications.
+- Refreshed users, counters, runtime state, DNS, ACME and routing status after
+  successful actions without requiring a manual page reload.
+- Added UI contract and VPN-user regression checks for asynchronous actions.
+
 ## 1.0.10 - 2026-07-12
 
 - Removed full-page reloads after dependency, DNS, user and coverage actions.

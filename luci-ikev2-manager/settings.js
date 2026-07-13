@@ -1,7 +1,6 @@
 'use strict';
 'require view';
 'require fs';
-'require ui';
 'require ikev2-manager.shared as common';
 
 var helper = '/usr/libexec/ikev2-manager';
@@ -17,15 +16,6 @@ function input(type, value, attrs) {
 
 function encodeBase64(value) {
 	return window.btoa(unescape(encodeURIComponent(value)));
-}
-
-function updateAcmeLine(st) {
-	var pre = document.getElementById('ikev2-acme-status');
-	if (!pre)
-		return;
-	var msg = st ? _(st.message || st.state || '') : '';
-	pre.textContent = msg;
-	pre.style.display = msg ? '' : 'none';
 }
 
 function disclosure(title, description, content, badges) {
@@ -117,6 +107,7 @@ return view.extend({
 			_('Reset to generated')
 		]);
 		var rawResult = common.inlineResult();
+		var rawModePill = common.pill('', 'neutral');
 		var rawPanel = E('div', {
 			'style': 'display:none;margin-top:1rem'
 		}, [
@@ -125,9 +116,9 @@ return view.extend({
 			]),
 			rawText,
 			E('div', { 'class': 'ikev2-actions', 'style': 'margin-top:.7rem' }, [
-				rawSave,
+				rawResult.node,
 				rawReset,
-				rawResult.node
+				rawSave
 			])
 		]);
 
@@ -282,6 +273,7 @@ return view.extend({
 			_('Save ACME settings') ]);
 		var acmeRequest = E('button', { 'class': 'cbi-button cbi-button-action' }, [
 			_('Request certificate') ]);
+		var acmeResult = common.inlineResult();
 
 		var dnsRows = E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
 			common.fieldLabel(_('DNS provider'),
@@ -315,27 +307,26 @@ return view.extend({
 		acmeSave.addEventListener('click', function() {
 			return common.runAction({
 				button: acmeSave,
+				result: acmeResult,
 				busy: _('Saving...'),
+				success: _('ACME settings saved.'),
 				failure: _('ACME settings rejected'),
 				run: function() {
-					updateAcmeLine({ message: _('Saving...') });
 					return writeAcmeInput().then(function() {
 						return common.execChecked(helper, [ 'acme-set' ], _('ACME settings rejected'));
-					}).then(function() {
-						updateAcmeLine({ message: _('ACME settings saved.') });
 					});
-				},
-				onError: function(message) { updateAcmeLine({ message: message }); }
+				}
 			});
 		});
 
 		acmeRequest.addEventListener('click', function() {
 			return common.runAction({
 				button: acmeRequest,
+				result: acmeResult,
 				busy: _('Requesting...'),
 				failure: _('Certificate request failed.'),
 				run: function() {
-					updateAcmeLine({ message: _('Saving settings...') });
+					acmeResult.busy(_('Saving settings...'));
 					return writeAcmeInput().then(function() {
 						return common.execChecked(helper, [ 'acme-set' ], _('ACME settings rejected'));
 					}).then(function() {
@@ -347,23 +338,25 @@ return view.extend({
 						return common.pollAction(helper, [ 'acme-status' ], started.action_id, {
 							timeout: 300000,
 							interval: 2500,
-							onProgress: updateAcmeLine
+							onProgress: function(st) {
+								if (st.message)
+									acmeResult.busy(_(st.message));
+							}
 						});
 					}).then(function(st) {
 						if (!st) {
-							updateAcmeLine({ message:
-								_('The certificate request continues in the background. You can use the button again.') });
+							acmeResult.warn(
+								_('The certificate request continues in the background. You can use the button again.'));
 						}
 						else if (st.state === 'error') {
 							throw new Error(st.message || _('Certificate request failed.'));
 						}
 						else {
-							updateAcmeLine({ message: st.message || _('Certificate issued.') });
+							acmeResult.ok(st.message ? _(st.message) : _('Certificate issued.'));
 							return refreshServerState();
 						}
 					});
-				},
-				onError: function(message) { updateAcmeLine({ message: message }); }
+				}
 			});
 		});
 
@@ -371,12 +364,23 @@ return view.extend({
 			common.pill(_('Certificate present') +
 				(acme.cert_expiry ? ' · ' + common.formatDate(acme.cert_expiry) : ''), 'good') :
 			common.pill(_('No certificate'), 'bad');
+		var certSubjectPill = common.pill('', 'neutral');
 
 		// Reflect runtime reality, not just the UCI flag: an enabled server with no
 		// usable certificate is not actually serving, so warn instead of "Enabled".
 		var serverStatusPill = common.pill('', 'neutral');
 
 		function updateServerPills() {
+			common.setPill(rawModePill,
+				customMode ? _('Override active') : _('Generated'),
+				customMode ? 'warn' : 'good');
+			if (acme.cert_subject) {
+				common.setPill(certSubjectPill, acme.cert_subject, 'neutral');
+				certSubjectPill.style.display = '';
+			}
+			else {
+				certSubjectPill.style.display = 'none';
+			}
 			if (acme.cert_present === '1') {
 				common.setPill(acmeStatusPill,
 					_('Certificate present') +
@@ -470,15 +474,15 @@ return view.extend({
 						_('Use the Let\'s Encrypt staging CA for testing (untrusted certs, no rate limits).')),
 					common.switchLabel(acmeStaging)
 				]),
-				E('pre', { 'id': 'ikev2-acme-status', 'class': 'ikev2-status-box', 'style': 'display:none' }, []),
 				E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1rem' }, [
+					acmeResult.node,
 					acmeSave,
 					acmeRequest
 				])
 			]),
 			[
 				acmeStatusPill,
-				acme.cert_subject ? common.pill(acme.cert_subject, 'neutral') : ''
+				certSubjectPill
 			]
 		);
 
@@ -518,8 +522,7 @@ return view.extend({
 					]),
 					rawPanel,
 					E('div', { 'class': 'ikev2-actions spread', 'style': 'margin-top:1rem' }, [
-						customMode ? common.pill(_('Override active'), 'warn') :
-							common.pill(_('Generated'), 'good'),
+						rawModePill,
 						rawToggle
 					])
 				])

@@ -1,7 +1,6 @@
 'use strict';
 'require view';
 'require fs';
-'require ui';
 'require ikev2-manager.shared as common';
 
 var helper = '/usr/libexec/ikev2-manager-system';
@@ -17,55 +16,46 @@ function parseStatus(text) {
 	return out;
 }
 
-function updateDepsLine(st) {
-	var pre = document.getElementById('ikev2-deps-status');
-	if (!pre)
-		return;
-	var msg = st ? _(st.message || st.state || '') : '';
-	pre.textContent = msg;
-	pre.style.display = msg ? '' : 'none';
-}
-
 // install-deps detaches and reports through depsStatusFile; poll until the
 // run after `prev` finishes (state ok/error) or the deadline passes.
-function pollDeps(actionId, deadline) {
+function pollDeps(actionId, deadline, result) {
 	return L.resolveDefault(fs.read(depsStatusFile), '').then(function(txt) {
 		var st = parseStatus(txt);
-		updateDepsLine(st);
+		if (st.action_id === actionId && st.message)
+			result.busy(_(st.message));
 		if ((st.state === 'ok' || st.state === 'error') && st.action_id === actionId)
 			return st;
 		if (Date.now() >= deadline)
 			return null;
 		return new Promise(function(r) { window.setTimeout(r, 2000); }).then(function() {
-			return pollDeps(actionId, deadline);
+			return pollDeps(actionId, deadline, result);
 		});
 	});
 }
 
-function runDepsJob(button, cmd, doneMsg) {
+function runDepsJob(button, cmd, result, doneMsg, refresh) {
 	return common.runAction({
 		button: button,
+		result: result,
 		busy: _('Working...'),
 		run: function() {
 			return common.execChecked(helper, [ cmd ], _('Operation failed')).then(function(response) {
 				var actionId = parseStatus(response.stdout || '').action_id;
 				if (!actionId)
 					throw new Error(_('Action did not start'));
-				return pollDeps(actionId, Date.now() + 300000);
+				return pollDeps(actionId, Date.now() + 300000, result);
 			}).then(function(st) {
 				if (!st) {
-					ui.addNotification(null, E('p', {}, [
-						_('The operation continues in the background. You can use the button again.') ]), 'warning');
+					result.warn(_('The operation continues in the background. You can use the button again.'));
 				}
 				else if (st.state === 'error') {
 					throw new Error(st.message ? _(st.message) : _('Operation failed'));
 				}
 				else {
+					result.ok(doneMsg);
+					return refresh();
 				}
 			});
-		},
-		onError: function(message) {
-			ui.addNotification(null, E('p', {}, [ message ]), 'danger');
 		}
 	});
 }
@@ -248,22 +238,19 @@ return view.extend({
 	// Add/remove a device override and refresh only this table. The helper
 	// persists the rule before returning; routing services may finish updating in the
 	// background without forcing a page reload or losing the user's scroll.
-	deviceAction: function(args, busyBtn, onSaved) {
+	deviceAction: function(args, busyBtn, result, onSaved) {
 		return common.runAction({
 			button: busyBtn,
+			result: result,
 			busy: _('Saving...'),
+			success: _('Saved'),
 			run: function() {
 				return common.execChecked(devicesHelper, args, _('Operation failed')).then(function() {
 					return common.execChecked(devicesHelper, [ 'dump' ], _('Could not refresh device rules'));
 				}).then(function(response) {
 					if (onSaved)
 						onSaved(response.stdout || '');
-					ui.addNotification(null, E('p', {}, [
-						_('Saved. Domain routing is updating in the background.') ]), 'info');
 				});
-			},
-			onError: function(message) {
-				ui.addNotification(null, E('p', {}, [ message ]), 'danger');
 			}
 		});
 	},
@@ -271,6 +258,7 @@ return view.extend({
 	renderExceptions: function(dumpStdout) {
 		var self = this;
 		var list = E('div', {}, []);
+		var result = common.inlineResult();
 
 		function refreshList(stdout) {
 			var overrides = parseDeviceDump(stdout).filter(function(e) {
@@ -296,8 +284,8 @@ return view.extend({
 						'class': 'cbi-button cbi-button-remove',
 						'type': 'button'
 					}, [ _('Remove') ]);
-					rm.addEventListener('click', function() {
-						self.deviceAction([ 'remove-override', e.addr ], rm, refreshList);
+				rm.addEventListener('click', function() {
+					self.deviceAction([ 'remove-override', e.addr ], rm, result, refreshList);
 					});
 					return E('tr', { 'class': 'tr' }, [
 						E('td', { 'class': 'td' }, [ E('code', {}, [ e.addr ]) ]),
@@ -324,10 +312,10 @@ return view.extend({
 		add.addEventListener('click', function() {
 			var v = addr.value.trim();
 			if (!validateAddr(v)) {
-				ui.addNotification(null, E('p', {}, [ _('Invalid address') ]), 'warning');
+				result.err(_('Invalid address'));
 				return;
 			}
-			self.deviceAction([ 'add-override', v, mode.value ], add, function(stdout) {
+			self.deviceAction([ 'add-override', v, mode.value ], add, result, function(stdout) {
 				addr.value = '';
 				refreshList(stdout);
 			});
@@ -335,7 +323,9 @@ return view.extend({
 
 		return E('div', {}, [
 			list,
-			E('div', { 'class': 'ikev2-inline-form', 'style': 'margin-top:1rem' }, [ addr, mode, add ])
+			E('div', { 'class': 'ikev2-inline-form', 'style': 'margin-top:1rem' }, [
+				addr, mode, result.node, add
+			])
 		]);
 	},
 
@@ -359,6 +349,77 @@ return view.extend({
 		var removeDeps = E('button', { 'class': 'cbi-button cbi-button-remove' }, [
 			_('Remove runtime dependencies') ]);
 		var domainRuntime = domainRuntimeStatus(value);
+		var headerPill = common.pill('', 'neutral');
+		var managedDescription = E('p', {});
+		var managedToggle = common.toggleRow(enabled, _('Let the app manage the router'), '');
+		var domainDetail = E('span', { 'class': 'ikev2-toggle-sub' });
+		var domainPill = common.pill('', 'neutral');
+		var depsChecks = E('div', {});
+		var depsResult = common.inlineResult();
+		var depsPill = common.pill('', 'neutral');
+
+		function renderDependencyChecks() {
+			depRows = checkRows(doctor);
+			depGroups = dependencyGroups(depRows);
+			detailHalf = Math.ceil(depGroups.details.length / 2);
+			depsChecks.replaceChildren(
+				E('div', { 'class': 'ikev2-deps-summary' }, [
+					E('h4', {}, [ _('Key checks') ]),
+					E('div', { 'class': 'ikev2-two-col' }, [
+						common.keyValueTable(rowPairs(depGroups.summary.slice(0, 2))),
+						common.keyValueTable(rowPairs(depGroups.summary.slice(2)))
+					])
+				]),
+				E('details', { 'class': 'ikev2-diagnostics' }, [
+					E('summary', {}, [
+						_('Show %d more diagnostic checks').format(depGroups.details.length)
+					]),
+					E('div', { 'class': 'ikev2-diagnostics-body' }, [
+						E('div', { 'class': 'ikev2-two-col' }, [
+							common.keyValueTable(rowPairs(depGroups.details.slice(0, detailHalf))),
+							common.keyValueTable(rowPairs(depGroups.details.slice(detailHalf)))
+						])
+					])
+				])
+			);
+		}
+
+		function updateSetupState() {
+			ready = doctor.doctor_ok === '1';
+			domainRuntime = domainRuntimeStatus(value);
+			enabled.checked = value.configured === '1';
+			enabled.disabled = !ready;
+			save.disabled = !ready;
+			managedDescription.textContent = ready ?
+				_('Master switch: lets the app create and own the router routing, firewall and PBR. Off = the app only watches.') :
+				_('Install the runtime dependencies below first — then this switch becomes available.');
+			var toggleSub = managedToggle.querySelector('.ikev2-toggle-sub');
+			if (toggleSub)
+				toggleSub.textContent = ready ?
+					_('Creates and owns routing, firewall and PBR on the router.') :
+					_('Available after runtime dependencies are installed.');
+			common.setPill(headerPill,
+				value.configured === '1' ? _('Configured') : _('Not configured'),
+				value.configured === '1' ? 'good' : 'warn');
+			domainDetail.textContent = domainRuntime.detail;
+			common.setPill(domainPill, domainRuntime.label, domainRuntime.tone);
+			common.setPill(depsPill, ready ? _('Ready') : _('Dependencies missing'),
+				ready ? 'good' : 'bad');
+			installDeps.style.display = ready ? 'none' : '';
+			removeDeps.style.display = ready ? '' : 'none';
+			renderDependencyChecks();
+		}
+
+		function refreshSetupState() {
+			return Promise.all([
+				common.execChecked(helper, [ 'get' ], _('Unable to refresh configuration')),
+				common.execChecked(helper, [ 'doctor' ], _('Unable to refresh system readiness'))
+			]).then(function(results) {
+				value = common.parseKeyValues(results[0].stdout || '');
+				doctor = common.parseKeyValues(results[1].stdout || '');
+				updateSetupState();
+			});
+		}
 
 		// ── Network selectors ────────────────────────────────────────────
 		var protectedSet = {};
@@ -422,46 +483,44 @@ return view.extend({
 				statusPath: helper,
 				statusArgs: [ 'action-status' ],
 				timeout: 150000,
-				timeoutMessage: _('The operation continues in the background. You can use the button again.')
+				timeoutMessage: _('The operation continues in the background. You can use the button again.'),
+				onSuccess: function(st) {
+					if (st && st.state !== 'timeout')
+						return refreshSetupState();
+				}
 			});
 		});
 
 		installDeps.addEventListener('click', function() {
 			if (!window.confirm(_('Install missing runtime packages now? DNS/DHCP may restart briefly while dnsmasq-full replaces dnsmasq.')))
 				return;
-			runDepsJob(installDeps, 'install-deps', _('Dependencies installed. Rechecking...'));
+			runDepsJob(installDeps, 'install-deps', depsResult,
+				_('Dependencies installed. Rechecking...'), refreshSetupState);
 		});
 
 		removeDeps.addEventListener('click', function() {
 			if (!window.confirm(_('Restore the router state from before dependency installation? The VPN and managed routing stop. Only packages recorded as installed by this app are removed, and the previous DNS/DHCP state is restored.')))
 				return;
-			runDepsJob(removeDeps, 'remove-deps', _('Runtime dependencies removed.'));
+			runDepsJob(removeDeps, 'remove-deps', depsResult,
+				_('Runtime dependencies removed.'), refreshSetupState);
 		});
 
-		if (!ready) {
-			enabled.disabled = true;
-			save.disabled = true;
-		}
+		updateSetupState();
 
 		return E([
 			common.styles(),
 			E('div', { 'class': 'ikev2-page' }, [
 				common.header(_('IKEv2 Manager Overview'),
 					_('Install the app safely, prepare dependencies, then enable the managed routing configuration only when the checks are green.'),
-					common.pill(value.configured === '1' ? _('Configured') : _('Not configured'),
-						value.configured === '1' ? 'good' : 'warn')),
+					headerPill),
 				E('section', { 'class': 'ikev2-section' }, [
 					E('div', { 'class': 'ikev2-section-head' }, [
 						E('div', {}, [
 							E('h3', {}, [ _('Managed mode') ]),
-							E('p', {}, [ ready ?
-								_('Master switch: lets the app create and own the router routing, firewall and PBR. Off = the app only watches.') :
-								_('Install the runtime dependencies below first — then this switch becomes available.') ])
+							managedDescription
 						])
 					]),
-					common.toggleRow(enabled, _('Let the app manage the router'),
-						ready ? _('Creates and owns routing, firewall and PBR on the router.') :
-							_('Available after runtime dependencies are installed.')),
+					managedToggle,
 					E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:.9rem' }, [
 						applyResult.node,
 						save
@@ -469,41 +528,22 @@ return view.extend({
 					E('div', { 'class': 'ikev2-health-row', 'style': 'margin-top:1rem' }, [
 						E('span', { 'class': 'ikev2-health-copy' }, [
 							E('strong', {}, [ _('Domain routing engine') ]),
-							E('span', { 'class': 'ikev2-toggle-sub' }, [
-								domainRuntime.detail
-							])
+							domainDetail
 						]),
-						common.pill(domainRuntime.label, domainRuntime.tone)
+						domainPill
 					])
 				]),
 				common.section(_('Runtime dependencies'),
 					_('This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. Remove restores the DNS/DHCP configuration and deletes only packages this app recorded as newly installed. VPN and routing stay disabled until managed mode is enabled.'),
 					E('div', {}, [
-						E('div', { 'class': 'ikev2-deps-summary' }, [
-							E('h4', {}, [ _('Key checks') ]),
-							E('div', { 'class': 'ikev2-two-col' }, [
-								common.keyValueTable(rowPairs(depGroups.summary.slice(0, 2))),
-								common.keyValueTable(rowPairs(depGroups.summary.slice(2)))
-							])
-						]),
-						E('details', { 'class': 'ikev2-diagnostics' }, [
-							E('summary', {}, [
-								_('Show %d more diagnostic checks').format(depGroups.details.length)
-							]),
-							E('div', { 'class': 'ikev2-diagnostics-body' }, [
-								E('div', { 'class': 'ikev2-two-col' }, [
-									common.keyValueTable(rowPairs(depGroups.details.slice(0, detailHalf))),
-									common.keyValueTable(rowPairs(depGroups.details.slice(detailHalf)))
-								])
-							])
-						]),
-						E('pre', { 'id': 'ikev2-deps-status', 'class': 'ikev2-status-box', 'style': 'display:none' }, []),
+						depsChecks,
 						E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1rem' }, [
-							ready ? removeDeps : installDeps
+							depsResult.node,
+							installDeps,
+							removeDeps
 						])
 					]),
-					common.pill(ready ? _('Ready') : _('Dependencies missing'),
-						ready ? 'good' : 'bad')),
+					depsPill),
 				common.section(_('Network integration'),
 					_('Choose the WAN uplink and the networks this app protects. Firewall zones are detected automatically.'),
 					E('div', {}, [

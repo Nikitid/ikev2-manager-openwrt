@@ -1,7 +1,7 @@
 'use strict';
 'require view';
 'require fs';
-'require ui';
+'require poll';
 'require ikev2-manager.shared as common';
 
 var helper = '/usr/libexec/ikev2-manager';
@@ -264,11 +264,45 @@ return view.extend({
 		var child = outbound && Object.values(outbound['child-sas'] || {})
 			.find(function(item) { return item.name === 'proxy4'; });
 		var statusPill = common.pill('', 'neutral');
+		var rawModePill = common.pill('', 'neutral');
 
-		function updateStatusPill() {
+		function liveCard(label, extraClass) {
+			var valueNode = E('div', { 'class': 'ikev2-card-value' });
+			var detailNode = E('div', { 'class': 'ikev2-card-detail' });
+			return {
+				node: E('div', { 'class': 'ikev2-card ' + (extraClass || '') }, [
+					E('div', { 'class': 'ikev2-card-label' }, [ label ]),
+					valueNode,
+					detailNode
+				]),
+				value: valueNode,
+				detail: detailNode
+			};
+		}
+
+		var gatewayCard = liveCard(_('Remote gateway'), 'third');
+		var virtualCard = liveCard(_('Virtual IPv4'), 'third');
+		var trafficCard = liveCard(_('Current session traffic'), 'third');
+
+		function updateConnectionView() {
 			common.setPill(statusPill,
 				customMode ? _('Custom config') : (child ? _('Connected') : _('Disconnected')),
 				customMode ? 'warn' : (child ? 'good' : 'bad'));
+			common.setPill(rawModePill,
+				customMode ? _('Override active') : _('Generated'),
+				customMode ? 'warn' : 'good');
+			gatewayCard.value.textContent = outbound ? outbound['remote-host'] :
+				(value.remote_address || '-');
+			gatewayCard.detail.textContent = outbound ? outbound['remote-id'] : (value.remote_id || '');
+			virtualCard.value.textContent = outbound && (outbound['local-vips'] || [])[0] || '-';
+			virtualCard.detail.textContent = child ?
+				common.formatDuration(child['install-time']) + ' ' + _('online') : '';
+			var down = child ? Number(child['bytes-in'] || 0) : 0;
+			var up = child ? Number(child['bytes-out'] || 0) : 0;
+			trafficCard.value.textContent = common.formatBytes(down + up);
+			trafficCard.detail.textContent = child ?
+				_('Down %s, up %s').format(common.formatBytes(down), common.formatBytes(up)) :
+				_('No active traffic SA');
 		}
 
 		function refreshClientState() {
@@ -280,10 +314,11 @@ return view.extend({
 				outbound = findOutbound(common.parseSwanmon(results[1]));
 				child = outbound && Object.values(outbound['child-sas'] || {})
 					.find(function(item) { return item.name === 'proxy4'; });
-				updateStatusPill();
+				updateConnectionView();
 			});
 		}
-		updateStatusPill();
+		updateConnectionView();
+		poll.add(refreshClientState, 5);
 		var enabled = input('checkbox', value.enabled);
 		var address = input('text', value.remote_address, {
 			'placeholder': _('IPv4 address or hostname')
@@ -458,6 +493,8 @@ return view.extend({
 			configuredDnsValue(dnsValue, 'fallback', 'current_fallback', ''),
 			endpointPlaceholder, _('Add fallback server'), _('No fallback servers added'));
 		var dnsResult = common.inlineResult();
+		var dnsCurrentText = E('span', {});
+		var dnsStatus = common.pill('', 'neutral');
 		var dnsSave = E('button', {
 			'class': 'cbi-button cbi-button-apply',
 			'type': 'button'
@@ -507,6 +544,19 @@ return view.extend({
 
 		function syncDnsVisibility() {
 			dnsManagedRows.style.display = dnsManaged.value === '1' ? '' : 'none';
+		}
+
+		function updateDnsState(next) {
+			dnsValue = common.parseKeyValues((next && next.stdout) || '');
+			dnsCurrentText.textContent = dnsValue.current_upstream || _('WAN-provided resolvers');
+			if (dnsValue.managed === '1') {
+				common.setPill(dnsStatus,
+					dnsValue.running === '1' ? _('Managed') : _('Stopped'),
+					dnsValue.running === '1' ? 'good' : 'bad');
+			}
+			else {
+				common.setPill(dnsStatus, _('Existing settings'), 'neutral');
+			}
 		}
 
 		rebuildDnsProviders(dnsValue.provider || 'cloudflare');
@@ -579,21 +629,14 @@ return view.extend({
 							if (st.state === 'error')
 								throw new Error(st.message || _('DNS apply failed'));
 							dnsResult.ok(_('DNS is working'));
-							return L.resolveDefault(fs.exec(systemHelper, [ 'dns-get' ]), { stdout: '' });
+							return L.resolveDefault(fs.exec(systemHelper, [ 'dns-get' ]), { stdout: '' })
+								.then(function(next) { updateDnsState(next); });
 						});
 				}
 			});
 		});
 
-		var dnsCurrent = dnsValue.current_upstream || _('WAN-provided resolvers');
-		var dnsStatus = dnsValue.managed === '1' ?
-			common.pill(dnsValue.running === '1' ? _('Managed') : _('Stopped'),
-				dnsValue.running === '1' ? 'good' : 'bad') :
-			common.pill(_('Existing settings'), 'neutral');
-
-		var traffic = child ? _('Down %s, up %s').format(
-			common.formatBytes(child['bytes-in']),
-			common.formatBytes(child['bytes-out'])) : _('No active traffic SA');
+		updateDnsState({ stdout: (data[4] && data[4].stdout) || '' });
 
 		return E([
 			common.styles(),
@@ -602,16 +645,9 @@ return view.extend({
 					_('The router uses this IPv4 IKEv2 tunnel for domains and devices selected on the Policy Routing page.'),
 					statusPill),
 				E('div', { 'class': 'ikev2-grid' }, [
-					common.card(_('Remote gateway'),
-						outbound ? outbound['remote-host'] : (value.remote_address || '-'),
-						outbound ? outbound['remote-id'] : value.remote_id, 'third'),
-					common.card(_('Virtual IPv4'),
-						outbound && (outbound['local-vips'] || [])[0] || '-',
-						child ? common.formatDuration(child['install-time']) + ' ' + _('online') : '', 'third'),
-					common.card(_('Current session traffic'),
-						child ? common.formatBytes(
-							Number(child['bytes-in'] || 0) + Number(child['bytes-out'] || 0)) : '0 B',
-						traffic, 'third')
+					gatewayCard.node,
+					virtualCard.node,
+					trafficCard.node
 				]),
 				common.section(_('Connection'),
 					_('Changing these values reloads the tunnel profile and reconnects it. The PBR policy remains loaded.'),
@@ -651,7 +687,7 @@ return view.extend({
 					_('Choose the public DNS upstream. In reliable mode dnsmasq sends public queries through sing-box, which uses dnsproxy as its upstream; in legacy mode dnsmasq uses dnsproxy directly.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-note', 'style': 'margin-bottom:1rem' }, [
-							_('Current upstream: %s').format(dnsCurrent),
+							_('Current upstream:'), ' ', dnsCurrentText,
 							E('br'),
 							_('This is a router-wide resolver setting. Upstream DNS connections use the router default route.')
 						]),
@@ -670,8 +706,7 @@ return view.extend({
 						rawPanel,
 						E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1rem' }, [ rawToggle ])
 					]),
-					customMode ? common.pill(_('Override active'), 'warn') :
-						common.pill(_('Generated'), 'good')),
+					rawModePill),
 				E('div', { 'class': 'ikev2-note warn' }, [
 					_('Disabling this client intentionally blocks selected domains. The fail-closed route does not fall back to the home WAN.')
 				])

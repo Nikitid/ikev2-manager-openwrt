@@ -86,14 +86,12 @@ var ru = {
 	'Save server': 'Сохранить сервер',
 	'Saving settings...': 'Сохранение настроек...',
 	'Staging': 'Тестовый центр',
-	'Still running. Reload the page in a minute to see the result.': 'Ещё выполняется. Обновите страницу через минуту, чтобы увидеть результат.',
 	'Stored — leave empty to keep, or paste to replace': 'Сохранено — оставьте пустым чтобы сохранить, или вставьте чтобы заменить',
 	'Use the Let\'s Encrypt staging CA for testing (untrusted certs, no rate limits).': 'Использовать тестовый центр Let\'s Encrypt (сертификаты не доверенные, строгих лимитов нет).',
 	'Used for the Let\'s Encrypt account and expiry notices.': 'Для аккаунта Let\'s Encrypt и уведомлений об истечении.',
 	'acme.sh dns_* plugin. Timeweb needs TW_Token.': 'Плагин acme.sh dns_*. Timeweb требует TW_Token.',
 	'Access policy rejected': 'Политика доступа отклонена',
 	'Server settings rejected': 'Настройки сервера отклонены',
-	'Applying in the background; reload in a moment.': 'Применяется в фоне; обновите страницу через момент.',
 	'Apply failed': 'Сбой применения',
 	'Applying configuration (firewall, PBR, strongSwan)...': 'Применяю конфигурацию межсетевого экрана, PBR и strongSwan...',
 	'Configuration applied.': 'Конфигурация применена.',
@@ -106,7 +104,6 @@ var ru = {
 	'VPN server': 'VPN-сервер',
 	'Inbound clients (ipsec-in)': 'Входящие клиенты (ipsec-in)',
 	'Reconnect failed': 'Не удалось переподключить',
-	'Still reconnecting; reload in a moment to see the result.': 'Ещё переподключается; обновите страницу через момент.',
 	'Session disconnected.': 'Сессия отключена.',
 	'Unable to disconnect the session: %s': 'Не удалось отключить сессию: %s',
 	'VPN user deleted.': 'Пользователь VPN удалён.',
@@ -199,7 +196,6 @@ var ru = {
 	'The app takes ownership of the router routing, firewall and PBR sections.': 'Приложение начинает управлять секциями маршрутизации, межсетевого экрана и PBR.',
 	'Until enabled, the app only monitors and changes nothing on the router. Enable managed mode to let it create and own the network, firewall and PBR sections that route selected domains through the tunnel. Disabling later removes only those app-owned sections — tunnels, users and domain lists are kept.': 'Пока режим выключен, приложение только наблюдает и ничего не меняет. После включения оно создаёт сетевые правила, правила межсетевого экрана и PBR для выбранных доменов. При последующем отключении удаляются только эти правила; настройки туннелей, пользователи и списки доменов сохраняются.',
 	'Installing dependencies… this can take a few minutes.': 'Устанавливаю зависимости… это может занять несколько минут.',
-	'Dependency installation did not report back in time. Reload the Overview to recheck.': 'Установка не отчиталась вовремя. Перезагрузите «Обзор» для перепроверки.',
 	'Dependencies are installing in the background.': 'Зависимости устанавливаются в фоне.',
 	'Working...': 'Выполняется...',
 	'Language': 'Язык',
@@ -484,7 +480,6 @@ var ru = {
 	'DNS interception was not detected. Domain routing may miss clients using another DNS server.': 'DNS-перехват не обнаружен. Доменная маршрутизация может пропускать клиентов с другим DNS.',
 	'DNS upstream': 'Внешний DNS',
 	'Choose how the router resolves public DNS names. dnsmasq-full remains the local resolver and continues populating PBR nftsets.': 'Выберите, как роутер разрешает публичные DNS-имена. dnsmasq-full остаётся локальным резолвером и продолжает наполнять nftset для PBR.',
-	'Current upstream: %s': 'Текущий upstream: %s',
 	'This is a router-wide resolver setting. Upstream DNS connections use the router default route.': 'Это общая настройка DNS для всего роутера. Соединения с внешним DNS используют основной маршрут роутера.',
 	'DNS management': 'Управление DNS',
 	'Keep existing router DNS': 'Сохранить текущий DNS роутера',
@@ -549,7 +544,11 @@ var ru = {
 	'Done. The active PBR list now has %s domains.': 'Готово. В активном PBR-списке сейчас %s доменов.',
 	'Down': 'Не работает',
 	'Edit domains': 'Редактировать домены',
-	'Editor not ready — please reload the page.': 'Редактор не готов, перезагрузите страницу.',
+	'Editor is not ready.': 'Редактор не готов.',
+	'Policy error': 'Ошибка политики',
+	'Current upstream:': 'Текущий DNS:',
+	'Unable to refresh configuration': 'Не удалось обновить состояние конфигурации',
+	'Unable to refresh system readiness': 'Не удалось обновить состояние системных компонентов',
 	'Empty means all router services': 'Пусто означает все сервисы роутера',
 	'Encrypted DNS port 853': 'Шифрованный DNS порт 853',
 	'Flow offload': 'Ускорение обработки трафика',
@@ -597,7 +596,6 @@ var ru = {
 	'Runtime mode': 'Текущий режим',
 	'SHA-256 fingerprint': 'Отпечаток SHA-256',
 	'SafeXcel': 'SafeXcel',
-	'Save written, but the rebuild did not report back in time. Check the status line after reloading.': 'Сохранено, но пересборка не отчиталась вовремя. Проверьте статус после перезагрузки страницы.',
 	'Saved. PBR is restarting in the background (~15s).': 'Сохранено. PBR перезапускается в фоне (~15 с).',
 	'Saved. Rebuilding the PBR list (manual: %d, services: %d)…': 'Сохранено. Пересобираю PBR-список (вручную: %d, сервисы: %d)…',
 	'Saving...': 'Сохраняю...',
@@ -2014,6 +2012,7 @@ function setBusy(button, busy, label) {
 		if (button.dataset.busy !== '1') {
 			button.dataset.idleLabel = button.textContent;
 			button.dataset.idleHtml = button.innerHTML;
+			button.dataset.idleDisabled = button.disabled ? '1' : '0';
 		}
 		button.dataset.busy = '1';
 		button.disabled = true;
@@ -2022,7 +2021,8 @@ function setBusy(button, busy, label) {
 	}
 	else {
 		delete button.dataset.busy;
-		button.disabled = false;
+		button.disabled = button.dataset.idleDisabled === '1';
+		delete button.dataset.idleDisabled;
 		button.removeAttribute('aria-busy');
 		if (button.dataset.idleHtml != null)
 			button.innerHTML = button.dataset.idleHtml;
