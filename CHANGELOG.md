@@ -4,7 +4,7 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
-## 1.1.0-rc1 - 2026-07-13
+## 1.1.0_rc1 - 2026-07-13
 
 - Standardized all LuCI actions on local inline status feedback instead of
   global notifications.
