@@ -13,6 +13,7 @@ root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 
 sdk="${OPENWRT_SDK_DIR:-}"
 signing_key="${OPENWRT_APK_SIGNING_KEY:-}"
+release_tag="${OPENWRT_APK_RELEASE_TAG:-}"
 public_key="$root/$OPENWRT_APK_KEY_FILE"
 output="$root/dist/apk-feed"
 
@@ -98,14 +99,25 @@ grep -q "${PKG_NAME}" "$tmp/packages.json" ||
 	"$output/$package_name" >"$tmp/package.json"
 grep -Fq '"pre-deinstall":' "$tmp/package.json" &&
 grep -Fq 'PKG_UPGRADE:-0' "$tmp/package.json" &&
-grep -Fq "remove | '')" "$tmp/package.json" ||
+grep -Fq "remove | '')" "$tmp/package.json" &&
+grep -Fq 'cleanup helper is missing; package removal stopped before changing files' \
+	"$tmp/package.json" &&
+grep -Fq 'unable to restore managed router state; package removal stopped before changing files' \
+	"$tmp/package.json" ||
 	fail 'built APK does not contain the guarded removal cleanup'
 if grep -Fq '/etc/init.d/rpcd restart' "$tmp/package.json"; then
 	fail 'built APK restarts rpcd during its package transaction'
 fi
 
 cp "$public_key" "$output/ikev2-manager-release.pem"
-cp "$root/scripts/install-openwrt25.sh" "$output/install-openwrt25.sh"
+release_base="$OPENWRT_APK_RELEASE_BASE"
+if [ -n "$release_tag" ]; then
+	case "$release_tag" in *[!A-Za-z0-9._-]*) fail 'invalid APK release tag' ;; esac
+	release_base="https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/$release_tag"
+fi
+sed "s|^OPENWRT_APK_RELEASE_BASE=https://.*|OPENWRT_APK_RELEASE_BASE=$release_base|" \
+	"$root/scripts/install-openwrt25.sh" >"$output/install-openwrt25.sh"
+chmod 0755 "$output/install-openwrt25.sh"
 (
 	cd "$output"
 	sha256sum "$package_name" packages.adb ikev2-manager-release.pem \

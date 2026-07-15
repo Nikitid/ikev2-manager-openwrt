@@ -27,8 +27,11 @@ git -C "$root" ls-files --cached --others --exclude-standard |
 grep -q "OPENWRT_APK_TRUST_SHA256=$OPENWRT_APK_TRUST_SHA256" \
 	"$root/scripts/install-openwrt25.sh" ||
 	fail 'bootstrap public-key checksum is out of sync'
-grep -q "OPENWRT_APK_FEED_URL=$OPENWRT_APK_FEED_URL" \
+grep -q "OPENWRT_APK_RELEASE_BASE=$OPENWRT_APK_RELEASE_BASE" \
 	"$root/scripts/install-openwrt25.sh" ||
-	fail 'bootstrap feed URL is out of sync'
+	fail 'bootstrap stable release base is out of sync'
+grep -Fq 'OPENWRT_APK_FEED_URL="$OPENWRT_APK_RELEASE_BASE/packages.adb"' \
+	"$root/scripts/install-openwrt25.sh" ||
+	fail 'bootstrap feed URL is not derived from the release channel'
 
 printf 'check-apk-feed OK\n'

@@ -129,8 +129,44 @@ function validDnsEndpoint(protocol, value) {
 		doh3: 'https://', h3: 'h3://', doq: 'quic://', dnscrypt: 'sdns://'
 	};
 	var prefix = accepted[protocol];
-	return !!prefix && value.indexOf(prefix) === 0 && value.length > prefix.length &&
-		/^[A-Za-z0-9._~:/?@%+=,&;-]+$/.test(value);
+	if (!prefix || value.indexOf(prefix) !== 0 || value.length > 2048)
+		return false;
+	var remainder = value.slice(prefix.length);
+	if (protocol === 'dnscrypt')
+		return remainder.length >= 8 && /^[A-Za-z0-9_-]+$/.test(remainder);
+	var path = '';
+	if (protocol === 'doh' || protocol === 'doh3' || protocol === 'h3') {
+		var slash = remainder.indexOf('/');
+		if (slash <= 0)
+			return false;
+		path = remainder.slice(slash);
+		remainder = remainder.slice(0, slash);
+		if (path === '/' || !/^\/[A-Za-z0-9._~:/?%+=,&;@-]+$/.test(path))
+			return false;
+	}
+	if (!remainder || /[\/?#@\[\]]/.test(remainder))
+		return false;
+	var parts = remainder.split(':');
+	if (parts.length > 2)
+		return false;
+	if (parts.length === 2) {
+		if (!/^\d+$/.test(parts[1]))
+			return false;
+		var port = Number(parts[1]);
+		if (port < 1 || port > 65535)
+			return false;
+	}
+	var host = parts[0];
+	if (/^\d+(?:\.\d+){3}$/.test(host)) {
+		var octets = host.split('.');
+		return octets.every(function(octet) { return Number(octet) <= 255; });
+	}
+	if (/^[0-9.]+$/.test(host) || host.length > 253)
+		return false;
+	return host.split('.').every(function(label) {
+		return label.length >= 1 && label.length <= 63 &&
+			/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label);
+	});
 }
 
 function validBootstrapEndpoint(value) {
@@ -216,8 +252,10 @@ function findOutbound(sas) {
 	return null;
 }
 
-function encodeBase64(value) {
-	return window.btoa(unescape(encodeURIComponent(value)));
+function writeProfileInput(value) {
+	var token = common.inputToken();
+	return fs.write('/var/run/ikev2-manager-profile-' + token + '.in', value, 384)
+		.then(function() { return token; });
 }
 
 function runManagerJob(button, result, args, busy, success, failure, timeout, onSuccess) {
@@ -325,9 +363,9 @@ return view.extend({
 		});
 		var remoteId = input('text', value.remote_id);
 		var username = input('text', value.username, { 'autocomplete': 'off' });
-		var password = input('text', '', {
-			'placeholder': _('Leave blank to keep the current password'),
-			'autocomplete': 'off'
+			var password = input('password', '', {
+				'placeholder': _('Leave blank to keep the current password'),
+				'autocomplete': 'new-password'
 		});
 		var dpd = input('number', value.dpd, { 'min': '10', 'max': '300' });
 		var mtu = input('number', value.mtu, { 'min': '1280', 'max': '1500' });
@@ -374,14 +412,18 @@ return view.extend({
 		});
 
 		rawSave.addEventListener('click', function() {
-			return runManagerJob(rawSave, rawResult,
-				[ 'advanced-start', 'outbound', encodeBase64(rawText.value) ],
-				_('Validating and reconnecting...'), _('Loaded'),
-				_('Custom configuration was rejected'), 120000, function(st) {
-					if (st && st.state !== 'timeout') {
-						customMode = true;
-						return refreshClientState();
-					}
+			return writeProfileInput(rawText.value).then(function(token) {
+				return runManagerJob(rawSave, rawResult,
+					[ 'advanced-start', 'outbound', token ],
+					_('Validating and reconnecting...'), _('Loaded'),
+					_('Custom configuration was rejected'), 120000, function(st) {
+						if (st && st.state !== 'timeout') {
+							customMode = true;
+							return refreshClientState();
+						}
+					});
+			}).catch(function(error) {
+				rawResult.err(error.message || error);
 				});
 		});
 
@@ -397,8 +439,9 @@ return view.extend({
 				});
 		});
 
-		function writeClientInput(mode) {
-			var payload = [
+			function writeClientInput(mode) {
+				var token = common.inputToken();
+				var payload = [
 				mode,
 				enabled.checked ? '1' : '0',
 				address.value.trim(),
@@ -409,12 +452,13 @@ return view.extend({
 				password.value,
 				reconnectCooldown.value
 			].join('\n') + '\n';
-			return fs.write('/var/run/ikev2-manager-client.in', payload, 384 /* 0600 */);
-		}
+				return fs.write('/var/run/ikev2-manager-client-' + token + '.in', payload, 384 /* 0600 */)
+					.then(function() { return token; });
+			}
 
 		function runClientInputJob(button, mode, busy, success, failure, timeout) {
-			return writeClientInput(mode).then(function() {
-				return runManagerJob(button, connectResult, [ 'client-input' ],
+				return writeClientInput(mode).then(function(token) {
+					return runManagerJob(button, connectResult, [ 'client-input', token ],
 					busy, success, failure, timeout, refreshClientState);
 			}).catch(function(error) {
 				connectResult.err(error.message || error);
@@ -595,7 +639,8 @@ return view.extend({
 						}))
 							throw new Error(_('Invalid fallback DNS endpoint'));
 					}
-					var payload = [
+						var token = common.inputToken();
+						var payload = [
 						dnsManaged.value,
 						dnsProtocol.value,
 						dnsProvider.value,
@@ -604,9 +649,9 @@ return view.extend({
 						bootstrap.join(' '),
 						fallback.join(' ')
 					].join('\n') + '\n';
-					return fs.write('/tmp/ikev2-manager-dns.in', payload, 384)
-						.then(function() {
-							return common.execChecked(systemHelper, [ 'dns-set-async' ],
+						return fs.write('/tmp/ikev2-manager-dns-' + token + '.in', payload, 384)
+							.then(function() {
+								return common.execChecked(systemHelper, [ 'dns-set-async', token ],
 								_('DNS settings rejected'));
 						})
 						.then(function(response) {
@@ -684,7 +729,7 @@ return view.extend({
 						E('div', { 'class': 'ikev2-actions bar' }, [ connectResult.node, reconnect, saveOnly, save ])
 					])),
 				common.section(_('DNS upstream'),
-					_('Choose the public DNS upstream. In reliable mode dnsmasq sends public queries through sing-box, which uses dnsproxy as its upstream; in legacy mode dnsmasq uses dnsproxy directly.'),
+					_('Choose the public DNS upstream. In reliable mode dnsmasq sends public queries through sing-box, which uses dnsproxy as its upstream; in standard mode dnsmasq uses dnsproxy directly.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-note', 'style': 'margin-bottom:1rem' }, [
 							_('Current upstream:'), ' ', dnsCurrentText,

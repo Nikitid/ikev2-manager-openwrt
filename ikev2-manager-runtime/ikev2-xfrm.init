@@ -4,7 +4,7 @@ START=19
 STOP=89
 
 is_active() {
-	[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] ||
+	[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || return 1
 	[ "$(uci -q get ikev2-manager.client.enabled)" = 1 ] ||
 	[ "$(uci -q get ikev2-manager.server.enabled)" = 1 ]
 }

@@ -18,6 +18,7 @@ set -eu
 [ "$1" = -q ]
 [ "$2" = -O ]
 cp "$TEST_APK_KEY" "$3"
+printf '%s\n' "$4" >>"${TEST_WGET_LOG:-/dev/null}"
 EOF
 cat >"$tmp/bin/apk" <<'EOF'
 #!/bin/sh
@@ -56,6 +57,22 @@ repo="$success_root/etc/apk/repositories.d/ikev2-manager.list"
 grep -qx 'update' "$tmp/apk-success.log"
 grep -qx 'add --simulate luci-app-ikev2-manager' "$tmp/apk-success.log"
 grep -qx 'add luci-app-ikev2-manager' "$tmp/apk-success.log"
+
+candidate_root="$tmp/candidate"
+candidate_base='https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/v1.1.0_rc2'
+new_root "$candidate_root"
+: >"$tmp/apk-candidate.log"
+: >"$tmp/wget-candidate.log"
+PATH="$tmp/bin:$PATH" \
+TEST_APK_KEY="$root/$OPENWRT_APK_KEY_FILE" \
+TEST_APK_LOG="$tmp/apk-candidate.log" \
+TEST_WGET_LOG="$tmp/wget-candidate.log" \
+IKEV2_APK_RELEASE_BASE="$candidate_base" \
+IKEV2_INSTALL_ROOT="$candidate_root" \
+	"$root/scripts/install-openwrt25.sh" >/dev/null
+[ "$(cat "$candidate_root/etc/apk/repositories.d/ikev2-manager.list")" = \
+	"$candidate_base/packages.adb" ]
+grep -Fxq "$candidate_base/ikev2-manager-release.pem" "$tmp/wget-candidate.log"
 
 failure_root="$tmp/failure"
 new_root "$failure_root"

@@ -22,10 +22,16 @@ node ./scripts/test-luci-users-ui.js
 ./scripts/test-package-lifecycle.sh
 
 ./scripts/test-runtime-modules.sh
+./scripts/test-system-validation.sh
+./scripts/test-dependency-state.sh
+./scripts/test-device-state.sh
 ./scripts/test-apk-bootstrap.sh
 ./scripts/test-dns-regressions.sh
 ./scripts/test-community-domains.sh
 ./scripts/test-user-credentials.sh
+./scripts/test-client-transaction.sh
+./scripts/test-acme-settings.sh
+./scripts/test-server-transaction.sh
 ./scripts/test-server-certificate-chain.sh
 
 PYTHONPYCACHEPREFIX="$root/build/pycache" \

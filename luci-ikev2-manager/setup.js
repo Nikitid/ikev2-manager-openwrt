@@ -100,7 +100,7 @@ function validateAddr(addr) {
 function domainRuntimeStatus(value) {
 	if (value.domain_engine !== 'fakeip') {
 		return {
-			label: _('Legacy mode active'),
+			label: _('Standard mode active'),
 			tone: 'neutral',
 			detail: _('PBR currently classifies selected services by their resolved public IP addresses. Configure the engine on the Policy Routing page.')
 		};
@@ -152,10 +152,11 @@ function checkRows(doctor) {
 		dnsproxy: _('Encrypted DNS proxy'),
 		sing_box: _('sing-box domain router'),
 		nft_tproxy: _('nftables TProxy support'),
-		pbr_service: _('PBR service'),
-		pbr_version: _('PBR version'),
-		failclosed_route: _('Fail-closed route'),
-		xfrm_module: _('XFRM interface module'),
+			pbr_service: _('PBR service'),
+			pbr_version: _('PBR version'),
+			failclosed_route: _('Fail-closed route'),
+			failclosed_ipv6_route: _('IPv6 fail-closed route'),
+			xfrm_module: _('XFRM interface module'),
 		xfrm_ifid_conflict: _('XFRM if_id conflict'),
 		xfrm_name_conflict: _('XFRM name conflict'),
 		swanctl: _('strongSwan swanctl'),
@@ -163,8 +164,10 @@ function checkRows(doctor) {
 		strongswan_kernel_netlink: _('strongSwan kernel-netlink'),
 		strongswan_vici: _('strongSwan VICI'),
 		strongswan_openssl: _('strongSwan OpenSSL'),
-		strongswan_eap_mschapv2: _('strongSwan EAP-MSCHAPv2'),
-		strongswan_x509: _('strongSwan X.509')
+			strongswan_eap_mschapv2: _('strongSwan EAP-MSCHAPv2'),
+			strongswan_eap_client_security: _('Outbound EAP security'),
+			strongswan_eap_server_security: _('Inbound strongSwan version'),
+			strongswan_x509: _('strongSwan X.509')
 	};
 	var rows = [];
 	Object.keys(labels).forEach(function(key) {
@@ -173,7 +176,8 @@ function checkRows(doctor) {
 		var value = doctor[key];
 		var good = value === 'ok' || value === 'none' || value.indexOf('ok:') === 0;
 		var warn = value.indexOf('warn:') === 0;
-		var shown = value.replace(/^(ok|warn):/, '');
+		var notice = value.indexOf('notice:') === 0;
+		var shown = value.replace(/^(ok|warn|notice):/, '');
 		if ((key === 'storage_free' || key === 'tmp_free' || key === 'memory_available') &&
 		    /^\d+KiB$/.test(shown)) {
 			shown = common.formatBytes(Number(shown.slice(0, -3)) * 1024);
@@ -186,8 +190,8 @@ function checkRows(doctor) {
 		rows.push({
 			key: key,
 			label: labels[key],
-			value: common.pill(_(shown), good ? 'good' : (warn ? 'warn' : 'bad')),
-			tone: good ? 'good' : (warn ? 'warn' : 'bad')
+			value: common.pill(_(shown), good ? 'good' : (notice ? 'info' : (warn ? 'warn' : 'bad'))),
+			tone: good ? 'good' : (notice ? 'info' : (warn ? 'warn' : 'bad'))
 		});
 	});
 	return rows;
@@ -239,18 +243,26 @@ return view.extend({
 	// persists the rule before returning; routing services may finish updating in the
 	// background without forcing a page reload or losing the user's scroll.
 	deviceAction: function(args, busyBtn, result, onSaved) {
-		return common.runAction({
+		return common.runJob({
 			button: busyBtn,
 			result: result,
 			busy: _('Saving...'),
 			success: _('Saved'),
-			run: function() {
-				return common.execChecked(devicesHelper, args, _('Operation failed')).then(function() {
-					return common.execChecked(devicesHelper, [ 'dump' ], _('Could not refresh device rules'));
-				}).then(function(response) {
+			failure: _('Operation failed'),
+			startPath: helper,
+			startArgs: [ 'device-async' ].concat(args),
+			statusPath: helper,
+			statusArgs: [ 'action-status' ],
+			timeout: 150000,
+			timeoutMessage: _('The operation continues in the background. You can use the button again.'),
+			onSuccess: function(st) {
+				if (st && st.state !== 'timeout') {
+					return common.execChecked(devicesHelper, [ 'dump' ],
+						_('Could not refresh device rules')).then(function(response) {
 					if (onSaved)
 						onSaved(response.stdout || '');
-				});
+					});
+				}
 			}
 		});
 	},

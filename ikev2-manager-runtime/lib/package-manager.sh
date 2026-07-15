@@ -61,8 +61,16 @@ pkg_remove_runtime() {
 	[ -n "$packages" ] || return 0
 	set -- $packages
 	case "$(pkg_manager_name)" in
-		opkg) opkg remove --force-depends "$@" ;;
+		opkg) opkg remove "$@" ;;
 		apk) apk del "$@" ;;
+		*) return 1 ;;
+	esac
+}
+
+pkg_remove_dnsmasq_provider() {
+	case "$(pkg_manager_name)" in
+		opkg) opkg remove --force-depends "$1" ;;
+		apk) apk del "$1" ;;
 		*) return 1 ;;
 	esac
 }
@@ -83,6 +91,32 @@ pkg_installed() {
 	esac
 }
 
+pkg_list_installed_names() {
+	case "$(pkg_manager_name)" in
+		opkg) listing="$(opkg list-installed 2>/dev/null)" || return 1 ;;
+		apk) listing="$(apk list --installed --manifest 2>/dev/null)" || return 1 ;;
+		*) return 1 ;;
+	esac
+	[ -n "$listing" ] || return 1
+	printf '%s\n' "$listing" | awk 'NF { print $1 }' | sort -u
+}
+
+pkg_added_since() {
+	snapshot="$1"
+	[ -s "$snapshot" ] || return 1
+	current="${snapshot}.current.$$"
+	pkg_list_installed_names >"$current" || { rm -f "$current"; return 1; }
+	awk 'NR == FNR { before[$1] = 1; next } !before[$1] { print $1 }' \
+		"$snapshot" "$current"
+	rm -f "$current"
+}
+
+pkg_remove_added_since() {
+	snapshot="$1"
+	added="$(pkg_added_since "$snapshot")" || return 1
+	[ -z "$added" ] || pkg_remove_runtime $added
+}
+
 pkg_version() {
 	case "$(pkg_manager_name)" in
 		opkg)
@@ -92,6 +126,19 @@ pkg_version() {
 			apk list --installed --manifest "$1" 2>/dev/null |
 				awk -v package="$1" '$1 == package { print $2; exit }'
 			;;
+	esac
+}
+
+pkg_version_at_least() {
+	local package minimum installed
+	package="$1"
+	minimum="$2"
+	installed="$(pkg_version "$package")"
+	[ -n "$installed" ] || return 1
+	case "$(pkg_manager_name)" in
+		opkg) opkg compare-versions "$installed" ge "$minimum" ;;
+		apk) [ "$(apk version -t "$installed" "$minimum" 2>/dev/null)" != '<' ] ;;
+		*) return 1 ;;
 	esac
 }
 
@@ -135,7 +182,7 @@ pkg_switch_dnsmasq_full() {
 		opkg)
 			full_pkg="$(pkg_package_file "$cache" dnsmasq-full)"
 			[ -n "$full_pkg" ] && [ -s "$full_pkg" ] || return 1
-			pkg_remove_runtime "$current_provider" && pkg_install "$full_pkg"
+				pkg_remove_dnsmasq_provider "$current_provider" && pkg_install "$full_pkg"
 			;;
 		apk)
 			# Installing by feed package name keeps repository trust. A file
@@ -154,13 +201,21 @@ pkg_restore_dnsmasq() {
 		opkg)
 			previous_pkg="$(pkg_package_file "$cache" "$previous_provider")"
 			[ -n "$previous_pkg" ] && [ -s "$previous_pkg" ] || return 1
+			if pkg_installed dnsmasq-full; then
+					pkg_remove_dnsmasq_provider dnsmasq-full || return 1
+			fi
 			pkg_install "$previous_pkg"
 			;;
 		apk)
-			if pkg_installed dnsmasq-full; then
-				pkg_remove_runtime dnsmasq-full || return 1
+			# Let apk solve the provider replacement before removing anything.
+			# This avoids leaving the router without DNS if repository access or
+			# dependency resolution fails while restoring the original package.
+			pkg_installed "$previous_provider" ||
+				pkg_install "$previous_provider" || return 1
+			if [ "$previous_provider" != dnsmasq-full ] && pkg_installed dnsmasq-full; then
+				pkg_remove_dnsmasq_provider dnsmasq-full || return 1
 			fi
-			pkg_installed "$previous_provider" || pkg_install "$previous_provider"
+			pkg_installed "$previous_provider"
 			;;
 		*) return 1 ;;
 	esac

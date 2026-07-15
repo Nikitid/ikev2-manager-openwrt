@@ -45,36 +45,48 @@ ensure_ipv6_failfast() {
 
 failclosed_check() (
 	table='pbr_ikev2out'
-	test_slot=$(( $$ % 1000 ))
-	test_table=$((49000 + test_slot))
-	test_mark='0x00fe0000'
-	test_mask='0x00ff0000'
-	test_priority=$((10000 + test_slot))
 	test_ip='203.0.113.77'
-	test_output="/tmp/ikev2-failclosed-check-$$"
+	routes="$(ip -4 route show table "$table" 2>/dev/null)"
 
-	ip -4 route show table "$table" 2>/dev/null |
+	printf '%s\n' "$routes" |
 		grep -Eq '^unreachable default( |$)' || return 1
 
-	cleanup_failclosed_check() {
-		ip -4 rule del priority "$test_priority" 2>/dev/null || true
-		ip -4 route flush table "$test_table" 2>/dev/null || true
-		rm -f "$test_output"
-	}
-	cleanup_failclosed_check
-	trap cleanup_failclosed_check EXIT INT TERM
-	ip -4 route add unreachable default metric 32767 table "$test_table"
-	ip -4 rule add priority "$test_priority" \
-		fwmark "$test_mark/$test_mask" lookup "$test_table"
-
-	if ip -4 route get "$test_ip" mark "$test_mark" >"$test_output" 2>&1; then
-		cleanup_failclosed_check
-		rm -f "$test_output"
-		return 1
+	# Derive the active PBR mark from the existing rule and query it without
+	# creating or deleting any routing objects. Doctor calls this function while
+	# rendering LuCI, so validation must be strictly read-only.
+	rule="$(ip -4 rule show 2>/dev/null |
+		awk -v table="$table" '
+			$0 ~ "lookup " table "([[:space:]]|$)" {
+				for (i = 1; i <= NF; i++)
+					if ($i == "fwmark") { print $(i + 1); exit }
+			}
+		')"
+	[ -n "$rule" ] || return 1
+	mark="${rule%%/*}"
+	if printf '%s\n' "$routes" | grep -Eq '^default dev ipsec-out( |$)'; then
+		output="$(ip -4 route get "$test_ip" mark "$mark" 2>&1)" || return 1
+		printf '%s\n' "$output" | grep -Eq '(^|[[:space:]])dev ipsec-out([[:space:]]|$)'
+	else
+		output="$(ip -4 route get "$test_ip" mark "$mark" 2>&1)" && return 1
+		printf '%s\n' "$output" | grep -qi 'unreachable'
 	fi
-	grep -qi 'unreachable' "$test_output"
-	result=$?
-	rm -f "$test_output"
-	cleanup_failclosed_check
-	return "$result"
+)
+
+failclosed_ipv6_check() (
+	table='pbr_ikev2out'
+	test_ip='2001:db8::77'
+
+	ip -6 route show table "$table" 2>/dev/null |
+		grep -Eq '^unreachable default( |$)' || return 1
+	rule="$(ip -6 rule show 2>/dev/null |
+		awk -v table="$table" '
+			$0 ~ "lookup " table "([[:space:]]|$)" {
+				for (i = 1; i <= NF; i++)
+					if ($i == "fwmark") { print $(i + 1); exit }
+			}
+		')"
+	[ -n "$rule" ] || return 1
+	mark="${rule%%/*}"
+	output="$(ip -6 route get "$test_ip" mark "$mark" 2>&1)" && return 1
+	printf '%s\n' "$output" | grep -qi 'unreachable'
 )

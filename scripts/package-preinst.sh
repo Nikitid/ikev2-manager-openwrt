@@ -55,18 +55,6 @@ case "$package_manager:${DISTRIB_RELEASE:-}" in
 		;;
 esac
 
-legacy_installed() {
-	case "$package_manager" in
-		opkg) opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' ;;
-		apk) apk info -e luci-app-ikev2-pbr >/dev/null 2>&1 ;;
-		*) return 1 ;;
-	esac
-}
-
-if legacy_installed; then
-	fail 'legacy package luci-app-ikev2-pbr is installed; use scripts/install.sh for the one-time migration'
-fi
-
 free_kib="$(df -Pk /overlay 2>/dev/null | awk 'NR == 2 { print $4 }')"
 [ -n "$free_kib" ] || free_kib="$(df -Pk / 2>/dev/null | awk 'NR == 2 { print $4 }')"
 case "${free_kib:-0}" in *[!0-9]*) free_kib=0 ;; esac

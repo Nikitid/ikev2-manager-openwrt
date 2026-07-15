@@ -22,9 +22,6 @@ opkg install /tmp/luci-app-ikev2-manager_*_all.ipk
 Configuration, users, custom destinations, cached service lists and
 certificates are preserved.
 
-For the pre-public `luci-app-ikev2-pbr` package, use `scripts/install.sh`; do
-not install both packages together.
-
 ### OpenWrt 25.12 signed feed
 
 The supported first-install path for OpenWrt 25.12 is:

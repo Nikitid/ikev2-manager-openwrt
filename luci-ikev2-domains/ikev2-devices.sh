@@ -12,8 +12,10 @@
 set -u
 
 BASE_RULE='ikev2pbr_domains'
+APP_CONFIG='ikev2-manager'
+APP_SECTION='domains'
 DEST_FILES='file:///etc/pbr-ikev2-domains.txt file:///etc/pbr-ikev2-service-cidrs.txt'
-RESTART_HELPER='/usr/libexec/ikev2-domains-restart'
+RESTART_HELPER="${IKEV2_RESTART_HELPER:-/usr/libexec/ikev2-domains-restart}"
 
 valid_addr() {
     [ -n "$1" ] || return 1
@@ -37,29 +39,88 @@ base_pos() {
         | awk -v t="$BASE_RULE" '{ if ($0 == t) { print NR-1; exit } }'
 }
 
-# Commit, optionally reorder sec before BASE_RULE, then restart PBR.
+# Commit, optionally reorder sec before BASE_RULE, then synchronously verify
+# PBR. On any failure put the exact previous UCI package back and re-apply it.
+restore_pbr() {
+	local backup="$1"
+	uci import pbr <"$backup/pbr" >/dev/null 2>&1 || true
+	uci import "$APP_CONFIG" <"$backup/app" >/dev/null 2>&1 || true
+	uci commit pbr >/dev/null 2>&1 || true
+	uci commit "$APP_CONFIG" >/dev/null 2>&1 || true
+	if [ "${IKEV2_ACTION_LOCK_HELD:-0}" = 1 ]; then
+		"$RESTART_HELPER" --wait --lock-held >/dev/null 2>&1 || true
+	else
+		"$RESTART_HELPER" --wait >/dev/null 2>&1 || true
+	fi
+	rm -rf "$backup"
+}
+
 commit_and_restart() {
-    local sec="${1:-}"
-    uci commit pbr
-    if [ -n "$sec" ]; then
-        local pos
-        pos=$(base_pos)
-        if [ -n "$pos" ]; then
-            uci reorder "pbr.${sec}=${pos}"
-            uci commit pbr
-        fi
+	local backup="$1" sec="${2:-}" pos result=0
+	uci commit pbr || result=1
+	uci commit "$APP_CONFIG" || result=1
+	if [ -n "$sec" ]; then
+		pos=$(base_pos)
+		if [ -n "$pos" ]; then
+			uci reorder "pbr.${sec}=${pos}" || result=1
+			uci commit pbr || result=1
+		else
+			result=1
+		fi
     fi
-    "$RESTART_HELPER"
+    if [ "$result" = 0 ]; then
+        if [ "${IKEV2_ACTION_LOCK_HELD:-0}" = 1 ]; then
+            "$RESTART_HELPER" --wait --lock-held || result=1
+        else
+            "$RESTART_HELPER" --wait || result=1
+        fi
+	fi
+	if [ "$result" != 0 ]; then
+		restore_pbr "$backup"
+		return 1
+    fi
+	rm -rf "$backup"
+}
+
+backup_pbr() {
+	local backup
+	backup="$(mktemp -d)" || return 1
+	if ! uci export pbr >"$backup/pbr" ||
+	   ! uci export "$APP_CONFIG" >"$backup/app"; then
+		rm -rf "$backup"
+		return 1
+    fi
+    printf '%s\n' "$backup"
+}
+
+device_sources() {
+	local src item result=''
+	src="$(uci -q get "${APP_CONFIG}.${APP_SECTION}.device_source" 2>/dev/null || true)"
+	if [ -z "$src" ]; then
+		src="$(uci -q get "pbr.${BASE_RULE}.src_addr" 2>/dev/null || true)"
+	fi
+	for item in $src; do
+		case "$item" in @*) continue ;; esac
+		result="${result:+$result }$item"
+	done
+	printf '%s\n' "$result"
+}
+
+set_device_sources() {
+	local item
+	uci -q delete "${APP_CONFIG}.${APP_SECTION}.device_source" || true
+	for item in $1; do
+		uci add_list "${APP_CONFIG}.${APP_SECTION}.device_source=$item" || return 1
+	done
 }
 
 cmd_dump() {
     local src a sec name tmpfile
 
-    # Domain-mode addresses live in base rule src_addr
-    src=$(uci -q get "pbr.${BASE_RULE}.src_addr" 2>/dev/null || true)
-    for a in $src; do
-        case "$a" in @*) continue ;; esac
-        printf 'addr=%s mode=domain\n' "$a"
+	# Domain-mode addresses are persisted in the app config and rendered to PBR.
+	src="$(device_sources)"
+	for a in $src; do
+		printf 'addr=%s mode=domain\n' "$a"
     done
 
     # Override policies: recognised by name prefix set by this tool
@@ -85,72 +146,89 @@ cmd_dump() {
 }
 
 cmd_add_subnet() {
-    local addr="${1:-}" src a
+    local addr="${1:-}" src a backup
     valid_addr "$addr" || { printf 'valid IPv4 address or subnet required\n' >&2; exit 1; }
 
-    src=$(uci -q get "pbr.${BASE_RULE}.src_addr" 2>/dev/null || true)
+	src="$(device_sources)"
     for a in $src; do [ "$a" = "$addr" ] && return 0; done
 
-    uci set "pbr.${BASE_RULE}.src_addr=${src:+$src }$addr"
-    commit_and_restart
+	backup="$(backup_pbr)" || return 1
+	set_device_sources "${src:+$src }$addr" || {
+		restore_pbr "$backup"
+		return 1
+	}
+    commit_and_restart "$backup"
 }
 
 cmd_remove_subnet() {
-    local addr="${1:-}" src a new=''
+    local addr="${1:-}" src a new='' backup
     valid_addr "$addr" || { printf 'valid IPv4 address or subnet required\n' >&2; exit 1; }
 
-    src=$(uci -q get "pbr.${BASE_RULE}.src_addr" 2>/dev/null || true)
+	src="$(device_sources)"
     for a in $src; do
         [ "$a" != "$addr" ] && new="${new:+$new }$a"
     done
-    uci set "pbr.${BASE_RULE}.src_addr=$new"
-    commit_and_restart
+	backup="$(backup_pbr)" || return 1
+	set_device_sources "$new" || {
+		restore_pbr "$backup"
+		return 1
+	}
+    commit_and_restart "$backup"
 }
 
 cmd_add_override() {
-    local addr="${1:-}" mode="${2:-}" sec
+    local addr="${1:-}" mode="${2:-}" sec backup
     valid_addr "$addr" || { printf 'valid IPv4 address or subnet required\n' >&2; exit 1; }
-    [ -n "$mode" ] || { printf 'mode required\n' >&2; exit 1; }
+	case "$mode" in
+		fullroute | exclude) ;;
+		*) printf 'unknown mode: %s\n' "$mode" >&2; return 1 ;;
+	esac
+
+    backup="$(backup_pbr)" || return 1
 
     # Remove any existing override for this addr before re-adding
     uci -q delete "pbr.$(fr_sec "$addr")" 2>/dev/null || true
     uci -q delete "pbr.$(ex_sec "$addr")" 2>/dev/null || true
 
-    case "$mode" in
-        fullroute)
-            sec=$(fr_sec "$addr")
-            uci set "pbr.${sec}=policy"
-            uci set "pbr.${sec}.name=VPN Full Route: $addr"
-            uci set "pbr.${sec}.interface=ikev2out"
-            uci set "pbr.${sec}.src_addr=$addr"
-            uci set "pbr.${sec}.proto=all"
-            uci set "pbr.${sec}.enabled=1"
-            ;;
-        exclude)
-            sec=$(ex_sec "$addr")
-            uci set "pbr.${sec}=policy"
-            uci set "pbr.${sec}.name=VPN Exclude: $addr"
-            uci set "pbr.${sec}.interface=$(uci -q get ikev2-manager.globals.wan_interface || echo wan)"
-            uci set "pbr.${sec}.src_addr=$addr"
-            uci set "pbr.${sec}.dest_addr=$DEST_FILES"
-            uci set "pbr.${sec}.proto=all"
-            uci set "pbr.${sec}.enabled=1"
-            ;;
-        *)
-            printf 'unknown mode: %s\n' "$mode" >&2
-            exit 1 ;;
-    esac
+	case "$mode" in
+		fullroute)
+			sec=$(fr_sec "$addr")
+			if ! uci set "pbr.${sec}=policy" ||
+			   ! uci set "pbr.${sec}.name=VPN Full Route: $addr" ||
+			   ! uci set "pbr.${sec}.interface=ikev2out" ||
+			   ! uci set "pbr.${sec}.src_addr=$addr" ||
+			   ! uci set "pbr.${sec}.proto=all" ||
+			   ! uci set "pbr.${sec}.enabled=1"; then
+				restore_pbr "$backup"
+				return 1
+			fi
+			;;
+		exclude)
+			sec=$(ex_sec "$addr")
+			if ! uci set "pbr.${sec}=policy" ||
+			   ! uci set "pbr.${sec}.name=VPN Exclude: $addr" ||
+			   ! uci set "pbr.${sec}.interface=$(uci -q get ikev2-manager.globals.wan_interface || echo wan)" ||
+			   ! uci set "pbr.${sec}.src_addr=$addr" ||
+			   ! uci set "pbr.${sec}.dest_addr=$DEST_FILES" ||
+			   ! uci set "pbr.${sec}.proto=all" ||
+			   ! uci set "pbr.${sec}.enabled=1"; then
+				restore_pbr "$backup"
+				return 1
+			fi
+			;;
+	esac
     # commit_and_restart with sec triggers uci reorder to place before BASE_RULE
-    commit_and_restart "$sec"
+    commit_and_restart "$backup" "$sec"
 }
 
 cmd_remove_override() {
-    local addr="${1:-}"
+    local addr="${1:-}" backup
     valid_addr "$addr" || { printf 'valid IPv4 address or subnet required\n' >&2; exit 1; }
 
+    backup="$(backup_pbr)" || return 1
     uci -q delete "pbr.$(fr_sec "$addr")" 2>/dev/null || true
     uci -q delete "pbr.$(ex_sec "$addr")" 2>/dev/null || true
-    commit_and_restart
+    commit_and_restart "$backup"
 }
 
 # List logical OpenWrt networks that have an IPv4 subnet, as name=CIDR lines.
@@ -165,8 +243,9 @@ cmd_networks() {
         addr=$(printf '%s' "$st" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null)
         mask=$(printf '%s' "$st" | jsonfilter -e '@["ipv4-address"][0].mask' 2>/dev/null)
         [ -n "$addr" ] && [ -n "$mask" ] || continue
-        NETWORK=''; PREFIX=''
-        eval "$(ipcalc.sh "$addr/$mask" 2>/dev/null)"
+        calc="$(ipcalc.sh "$addr/$mask" 2>/dev/null || true)"
+        NETWORK="$(printf '%s\n' "$calc" | sed -n 's/^NETWORK=//p' | head -n1)"
+        PREFIX="$(printf '%s\n' "$calc" | sed -n 's/^PREFIX=//p' | head -n1)"
         [ -n "$NETWORK" ] || continue
         printf '%s=%s/%s\n' "$n" "$NETWORK" "${PREFIX:-$mask}"
     done

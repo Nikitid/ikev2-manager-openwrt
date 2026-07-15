@@ -18,6 +18,40 @@ action_status() {
 	mv "${action_status_file}.new" "$action_status_file"
 }
 
+# PID-backed lock directories for small workers that do not use the global
+# action lock. A dead worker must not disable updates until the next reboot.
+pid_lock_acquire() {
+	local dir="$1" pid
+	if ! mkdir "$dir" 2>/dev/null; then
+		pid="$(cat "$dir/pid" 2>/dev/null || true)"
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			return 1
+		fi
+		rm -f "$dir/pid"
+		rmdir "$dir" 2>/dev/null || return 1
+		mkdir "$dir" 2>/dev/null || return 1
+	fi
+	printf '%s\n' "$$" >"$dir/pid"
+}
+
+pid_lock_busy() {
+	local dir="$1" pid
+	[ -d "$dir" ] || return 1
+	pid="$(cat "$dir/pid" 2>/dev/null || true)"
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$dir/pid"
+	rmdir "$dir" 2>/dev/null || return 0
+	return 1
+}
+
+pid_lock_release() {
+	local dir="$1"
+	rm -f "$dir/pid"
+	rmdir "$dir" 2>/dev/null || true
+}
+
 acquire_action_lock() {
 	owner="$1"
 	id="$2"
@@ -26,6 +60,13 @@ acquire_action_lock() {
 		updated="$(sed -n 's/^updated=//p' "$action_lock_status" 2>/dev/null | tail -1)"
 		pid="$(sed -n 's/^pid=//p' "$action_lock_status" 2>/dev/null | tail -1)"
 		now="$(date +%s)"
+		# mkdir() and publishing the owner file are separate operations. Give a
+		# new owner a short grace period instead of deleting its lock in that gap.
+		if [ -z "$pid" ] && [ "$tries" -lt 3 ]; then
+			tries=$((tries + 1))
+			sleep 1
+			continue
+		fi
 		if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null ||
 		   { [ -n "$updated" ] && [ $((now - updated)) -gt 3600 ]; }; then
 			rm -f "$action_lock_status"
@@ -36,8 +77,10 @@ acquire_action_lock() {
 		[ "$tries" -lt 180 ] || return 1
 		sleep 1
 	done
+	lock_status_tmp="${action_lock_status}.new.$$"
 	printf 'owner=%s\naction_id=%s\npid=%s\nupdated=%s\n' \
-		"$owner" "$id" "$$" "$(date +%s)" >"$action_lock_status"
+		"$owner" "$id" "$$" "$(date +%s)" >"$lock_status_tmp"
+	mv "$lock_status_tmp" "$action_lock_status"
 }
 
 start_action() {

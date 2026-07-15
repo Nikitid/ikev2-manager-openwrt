@@ -10,36 +10,93 @@ cidr_file="${IKEV2_CIDR_FILE:-/etc/pbr-ikev2-service-cidrs.txt}"
 catalog_file="${IKEV2_CATALOG_FILE:-/usr/share/ikev2-domains/community-services}"
 cache_dir="${IKEV2_CACHE_DIR:-/etc/pbr-ikev2-community-cache}"
 status_file="${IKEV2_STATUS_FILE:-/tmp/ikev2-domains-community.status}"
+status_dir="${IKEV2_STATUS_DIR:-/var/run/ikev2-domains-community-actions}"
 log_file="${IKEV2_LOG_FILE:-/tmp/ikev2-domains-community.log}"
 lock_dir="${IKEV2_LOCK_DIR:-/var/run/ikev2-domains-community.lock}"
-pending_file="${IKEV2_PENDING_FILE:-/var/run/ikev2-domains-community.pending}"
+pending_dir="${IKEV2_PENDING_DIR:-/var/run/ikev2-domains-community.pending.d}"
+input_prefix="${IKEV2_INPUT_PREFIX:-/tmp/ikev2-domains-input}"
 restart_helper="${IKEV2_RESTART_HELPER:-/usr/libexec/ikev2-domains-restart}"
+runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-/usr/libexec/ikev2-manager.d}"
 catalog_url="${IKEV2_CATALOG_URL:-https://api.github.com/repos/itdoginfo/allow-domains/contents/Services}"
 raw_base="${IKEV2_RAW_BASE:-https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Services}"
 local_services_dir="${IKEV2_LOCAL_SERVICES_DIR:-/usr/share/ikev2-domains/local-services}"
 max_catalog_bytes="${IKEV2_MAX_CATALOG_BYTES:-1048576}"
 max_service_bytes="${IKEV2_MAX_SERVICE_BYTES:-1048576}"
+max_selected_services="${IKEV2_MAX_SELECTED_SERVICES:-64}"
+max_total_bytes="${IKEV2_MAX_TOTAL_BYTES:-8388608}"
+max_total_domains="${IKEV2_MAX_TOTAL_DOMAINS:-200000}"
+max_parallel_downloads="${IKEV2_MAX_PARALLEL_DOWNLOADS:-4}"
+
+. "$runtime_lib_dir/actions.sh"
+
+positive_uint() {
+	case "$1" in
+		'' | 0 | *[!0-9]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+validate_resource_limits() {
+	for limit in "$max_catalog_bytes" "$max_service_bytes" \
+		"$max_selected_services" "$max_total_bytes" \
+		"$max_total_domains" "$max_parallel_downloads"; do
+		positive_uint "$limit" || {
+			echo 'invalid community resource limits' >&2
+			return 1
+		}
+	done
+}
+
+valid_input_token() {
+	case "$1" in
+		'' | *[!A-Za-z0-9-]*) return 1 ;;
+	esac
+	[ "${#1}" -ge 8 ] && [ "${#1}" -le 64 ]
+}
+
+input_file() {
+	printf '%s-%s.%s\n' "$input_prefix" "$1" "$2"
+}
 
 normalize_domains() {
-	awk '
+	local normalized rc
+	normalized="$(mktemp)" || return 1
+	if ! awk '
 		{
 			gsub(/\r/, "")
 			gsub(/^[ \t]+|[ \t]+$/, "")
 			line = tolower($0)
 			if (line == "" || substr(line, 1, 1) == "#")
 				next
-			if (line !~ /^[a-z0-9._-]+$/ || line ~ /\.\./ ||
-			    line ~ /^-/ || line ~ /-$/) {
+			if (length(line) > 253 || line !~ /^[a-z0-9._-]+$/ ||
+			    line ~ /^\./ || line ~ /\.$/ || line ~ /\.\./) {
 				printf "invalid domain: %s\n", line > "/dev/stderr"
 				exit 1
 			}
+			count = split(line, labels, ".")
+			for (i = 1; i <= count; i++) {
+				if (length(labels[i]) < 1 || length(labels[i]) > 63 ||
+				    labels[i] ~ /^-/ || labels[i] ~ /-$/) {
+					printf "invalid domain: %s\n", line > "/dev/stderr"
+					exit 1
+				}
+			}
 			print line
 		}
-	' "$1"
+	' "$1" >"$normalized"; then
+		rm -f "$normalized"
+		return 1
+	fi
+	sort -u "$normalized"
+	rc=$?
+	rm -f "$normalized"
+	return "$rc"
 }
 
 normalize_services() {
-	awk '
+	local normalized rc
+	normalized="$(mktemp)" || return 1
+	if ! awk '
 		{
 			gsub(/\r/, "")
 			gsub(/^[ \t]+|[ \t]+$/, "")
@@ -52,7 +109,14 @@ normalize_services() {
 			}
 			print line
 		}
-	' "$1" | sort -u
+	' "$1" >"$normalized"; then
+		rm -f "$normalized"
+		return 1
+	fi
+	sort -u "$normalized"
+	rc=$?
+	rm -f "$normalized"
+	return "$rc"
 }
 
 normalize_cidrs() {
@@ -116,13 +180,21 @@ refresh_catalog() {
 }
 
 download_service() {
-	local service="$1" destination="$2" cached="$cache_dir/$service.lst"
+	local service="$1" destination="$2" cached
+	cached="$cache_dir/$service.lst"
 	local downloaded normalized downloaded_size
 
-	# Check local bundled services first — no download needed
+	# Check local bundled services first, but validate them exactly like remote
+	# content so a packaging mistake cannot poison the active ruleset.
 	if [ -s "$local_services_dir/$service.lst" ]; then
-		cp "$local_services_dir/$service.lst" "$destination"
-		return 0
+		normalized="$(mktemp)"
+		if normalize_domains "$local_services_dir/$service.lst" \
+			>"$normalized" && [ -s "$normalized" ]; then
+			mv "$normalized" "$destination"
+			return 0
+		fi
+		rm -f "$normalized"
+		return 1
 	fi
 
 	downloaded="$(mktemp)"
@@ -136,7 +208,7 @@ download_service() {
 
 	if [ "$downloaded_size" -gt 0 ] &&
 		[ "$downloaded_size" -le "$max_service_bytes" ] &&
-		normalize_domains "$downloaded" | sort -u > "$normalized" &&
+		normalize_domains "$downloaded" > "$normalized" &&
 		[ -s "$normalized" ]; then
 		mkdir -p "$cache_dir"
 		cp "$normalized" "$cached.tmp"
@@ -161,27 +233,66 @@ download_service() {
 	return 1
 }
 
+publish_status() {
+	local source="$1" action_id="${2:-}" target
+	mkdir -p "$status_dir" || return 1
+	if [ -n "$action_id" ]; then
+		target="$status_dir/$action_id.status"
+		cp "$source" "${target}.new" || return 1
+		mv "${target}.new" "$target" || return 1
+	fi
+	cp "$source" "${status_file}.new" || return 1
+	mv "${status_file}.new" "$status_file"
+}
+
+write_simple_status() {
+	local action_id="$1" state="$2" message="${3:-}" tmp
+	tmp="$(mktemp)" || return 1
+	{
+		[ -z "$action_id" ] || echo "action_id=$action_id"
+		echo "state=$state"
+		echo "updated=$(date '+%Y-%m-%d %H:%M:%S %z')"
+		[ -z "$message" ] || echo "message=$message"
+	} >"$tmp"
+	publish_status "$tmp" "$action_id"
+	rm -f "$tmp"
+}
+
+restore_output() {
+	local backup="$1" destination="$2"
+	if [ -f "$backup" ]; then
+		cp "$backup" "${destination}.restore" && mv "${destination}.restore" "$destination"
+	else
+		rm -f "$destination"
+	fi
+}
+
 apply_once() {
 	local work selected normalized_manual service failed stale
 	local selected_count domain_count cidr_count custom_cidr_count pids pid action_id
+	local batch_count final_bytes
 	action_id="${1:-}"
 
-	work="$(mktemp -d)"
+	validate_resource_limits || return 1
+	work="$(mktemp -d)" || return 1
 	selected="$work/selected"
 	normalized_manual="$work/manual"
 	failed=0
 	pids=''
+	batch_count=0
 
 	[ -f "$manual_file" ] || cp "$final_file" "$manual_file"
 	[ -f "$manual_cidr_file" ] || : >"$manual_cidr_file"
-	[ -f "$selected_file" ] || : > "$selected_file"
+	[ -f "$selected_file" ] || : >"$selected_file"
 
-	if ! normalize_domains "$manual_file" | sort -u > "$normalized_manual"; then
+	if ! normalize_domains "$manual_file" >"$normalized_manual" ||
+	   ! normalize_services "$selected_file" >"$selected"; then
 		rm -rf "$work"
 		return 1
 	fi
-
-	if ! normalize_services "$selected_file" > "$selected"; then
+	selected_count="$(wc -l <"$selected" | tr -d ' ')"
+	if [ "$selected_count" -gt "$max_selected_services" ]; then
+		echo "too many selected services: $selected_count (limit $max_selected_services)" >&2
 		rm -rf "$work"
 		return 1
 	fi
@@ -190,12 +301,14 @@ apply_once() {
 		[ -n "$service" ] || continue
 		download_service "$service" "$work/$service.lst" &
 		pids="$pids $!"
-	done < "$selected"
-
-	for pid in $pids; do
-		wait "$pid" || failed=1
-	done
-
+		batch_count=$((batch_count + 1))
+		if [ "$batch_count" -ge "$max_parallel_downloads" ]; then
+			for pid in $pids; do wait "$pid" || failed=1; done
+			pids=''
+			batch_count=0
+		fi
+	done <"$selected"
+	for pid in $pids; do wait "$pid" || failed=1; done
 	if [ "$failed" -ne 0 ]; then
 		rm -rf "$work"
 		return 1
@@ -203,52 +316,61 @@ apply_once() {
 
 	{
 		cat "$normalized_manual"
-		for service in $(cat "$selected"); do
-			cat "$work/$service.lst"
-		done
-	} | sort -u > "$work/final"
+		while IFS= read -r service; do
+			[ -n "$service" ] && cat "$work/$service.lst"
+		done <"$selected"
+	} | sort -u >"$work/final"
 
 	if ! normalize_cidrs "$manual_cidr_file" >"$work/manual.cidrs"; then
 		rm -rf "$work"
 		return 1
 	fi
 	cp "$work/manual.cidrs" "$work/cidrs.unsorted"
-	for service in $(cat "$selected"); do
+	while IFS= read -r service; do
 		[ -s "$local_services_dir/$service.cidrs" ] || continue
 		if ! normalize_cidrs "$local_services_dir/$service.cidrs" \
 			>>"$work/cidrs.unsorted"; then
 			rm -rf "$work"
 			return 1
 		fi
-	done
+	done <"$selected"
 	sort -u "$work/cidrs.unsorted" 2>/dev/null >"$work/cidrs"
 
-	# An empty result is only legitimate when the user intentionally cleared
-	# everything (no custom domains AND no community services selected). If
-	# services were selected we must have content here — an empty list then
-	# means a download glitch, so we keep the previous list instead.
 	if [ ! -s "$work/final" ] && [ -s "$selected" ]; then
 		echo 'refusing to install an empty domain list (services selected but no domains resolved)' >&2
 		rm -rf "$work"
 		return 1
 	fi
+	domain_count="$(wc -l <"$work/final" | tr -d ' ')"
+	final_bytes="$(wc -c <"$work/final" | tr -d ' ')"
+	if [ "$domain_count" -gt "$max_total_domains" ] ||
+	   [ "$final_bytes" -gt "$max_total_bytes" ]; then
+		echo "combined domain list exceeds resource limits: $domain_count entries, $final_bytes bytes" >&2
+		rm -rf "$work"
+		return 1
+	fi
 
-	cp "$work/final" "$final_file.tmp"
-	chmod 600 "$final_file.tmp"
-	mv "$final_file.tmp" "$final_file"
-	cp "$work/cidrs" "$cidr_file.tmp"
-	chmod 600 "$cidr_file.tmp"
-	mv "$cidr_file.tmp" "$cidr_file"
+	[ ! -e "$final_file" ] || cp "$final_file" "$work/final.before"
+	[ ! -e "$cidr_file" ] || cp "$cidr_file" "$work/cidrs.before"
+	if ! cp "$work/final" "$final_file.tmp" ||
+	   ! chmod 600 "$final_file.tmp" || ! mv "$final_file.tmp" "$final_file" ||
+	   ! cp "$work/cidrs" "$cidr_file.tmp" ||
+	   ! chmod 600 "$cidr_file.tmp" || ! mv "$cidr_file.tmp" "$cidr_file" ||
+	   ! "$restart_helper" --wait; then
+		restore_output "$work/final.before" "$final_file" || true
+		restore_output "$work/cidrs.before" "$cidr_file" || true
+		"$restart_helper" --wait >/dev/null 2>&1 || true
+		rm -f "$final_file.tmp" "$cidr_file.tmp"
+		rm -rf "$work"
+		return 1
+	fi
 
-	selected_count="$(wc -l < "$selected" | tr -d ' ')"
-	domain_count="$(wc -l < "$work/final" | tr -d ' ')"
-	cidr_count="$(wc -l < "$work/cidrs" | tr -d ' ')"
-	custom_cidr_count="$(wc -l < "$work/manual.cidrs" | tr -d ' ')"
+	cidr_count="$(wc -l <"$work/cidrs" | tr -d ' ')"
+	custom_cidr_count="$(wc -l <"$work/manual.cidrs" | tr -d ' ')"
 	stale="$(cat "$work"/*.stale 2>/dev/null | sort -u | tr '\n' ' ')"
-
 	{
 		[ -z "$action_id" ] || echo "action_id=$action_id"
-		echo "state=ok"
+		echo 'state=ok'
 		echo "updated=$(date '+%Y-%m-%d %H:%M:%S %z')"
 		echo "services=$selected_count"
 		echo "domains=$domain_count"
@@ -256,27 +378,94 @@ apply_once() {
 		echo "custom_cidrs=$custom_cidr_count"
 		echo "selected=$(tr '\n' ',' <"$selected" | sed 's/,$//')"
 		[ -z "$stale" ] || echo "cached_services=$stale"
-	} > "$status_file"
-
+	} >"$work/status"
+	publish_status "$work/status" "$action_id" || true
 	rm -rf "$work"
-	"$restart_helper"
+}
+
+apply_staged_input() {
+	local action_id="$1" token="$2" work kind source destination bytes
+	local restore_kind restore_destination
+	valid_input_token "$token" || return 1
+	validate_resource_limits || return 1
+	work="$(mktemp -d)" || return 1
+	for kind in domains cidrs services; do
+		source="$(input_file "$token" "$kind")"
+		[ -f "$source" ] && [ ! -L "$source" ] || { rm -rf "$work"; return 1; }
+		bytes="$(wc -c <"$source" | tr -d ' ')"
+		case "$kind" in
+			domains) [ "$bytes" -le "$max_total_bytes" ] ;;
+			cidrs) [ "$bytes" -le 1048576 ] ;;
+			services) [ "$bytes" -le 65536 ] ;;
+		esac || { rm -rf "$work"; return 1; }
+	done
+	# Capture every previous input before replacing any of them. This keeps a
+	# failed three-file publish from deleting an input that was not backed up yet.
+	for kind in domains cidrs services; do
+		case "$kind" in
+			domains) destination="$manual_file" ;;
+			cidrs) destination="$manual_cidr_file" ;;
+			services) destination="$selected_file" ;;
+		esac
+		[ ! -e "$destination" ] || cp "$destination" "$work/$kind.before" || {
+			rm -rf "$work"
+			return 1
+		}
+	done
+	for kind in domains cidrs services; do
+		case "$kind" in
+			domains) destination="$manual_file" ;;
+			cidrs) destination="$manual_cidr_file" ;;
+			services) destination="$selected_file" ;;
+		esac
+		source="$(input_file "$token" "$kind")"
+		if ! cp "$source" "${destination}.new.$$" ||
+		   ! chmod 600 "${destination}.new.$$" ||
+		   ! mv "${destination}.new.$$" "$destination"; then
+			for restore_kind in domains cidrs services; do
+				case "$restore_kind" in
+					domains) restore_destination="$manual_file" ;;
+					cidrs) restore_destination="$manual_cidr_file" ;;
+					services) restore_destination="$selected_file" ;;
+				esac
+				restore_output "$work/$restore_kind.before" "$restore_destination" || true
+			done
+			rm -f "${destination}.new.$$"
+			rm -rf "$work"
+			return 1
+		fi
+	done
+	for kind in domains cidrs services; do rm -f "$(input_file "$token" "$kind")"; done
+	if apply_once "$action_id"; then
+		rm -rf "$work"
+		return 0
+	fi
+	restore_output "$work/domains.before" "$manual_file" || true
+	restore_output "$work/cidrs.before" "$manual_cidr_file" || true
+	restore_output "$work/services.before" "$selected_file" || true
+	rm -rf "$work"
+	return 1
 }
 
 run_scheduled() {
 	sleep 1
-	mkdir "$lock_dir" 2>/dev/null || exit 0
-	trap 'rmdir "$lock_dir"' EXIT INT TERM
-
-	while [ -e "$pending_file" ]; do
-		action_id="$(cat "$pending_file" 2>/dev/null || true)"
-		rm -f "$pending_file"
-		if ! apply_once "$action_id" >> "$log_file" 2>&1; then
-			{
-				[ -z "$action_id" ] || echo "action_id=$action_id"
-				echo "state=error"
-				echo "updated=$(date '+%Y-%m-%d %H:%M:%S %z')"
-				echo "message=Community update failed; previous combined list preserved"
-			} > "$status_file"
+	pid_lock_acquire "$lock_dir" || exit 0
+	trap 'pid_lock_release "$lock_dir"' EXIT INT TERM
+	idle_passes=0
+	while [ "$idle_passes" -lt 2 ]; do
+		pending="$(find "$pending_dir" -type f 2>/dev/null | sort | head -n1)"
+		if [ -z "$pending" ]; then
+			idle_passes=$((idle_passes + 1))
+			sleep 1
+			continue
+		fi
+		idle_passes=0
+		action_id="${pending##*/}"
+		token="$(sed -n '1p' "$pending" 2>/dev/null)"
+		rm -f "$pending"
+		if ! apply_staged_input "$action_id" "$token" >>"$log_file" 2>&1; then
+			write_simple_status "$action_id" error \
+				'Community update failed; previous combined list preserved' || true
 		fi
 	done
 }
@@ -300,15 +489,34 @@ case "${1:-}" in
 		done | sort -u
 		;;
 	schedule)
+		token="${2:-}"
+		valid_input_token "$token" || { echo 'invalid input token' >&2; exit 2; }
+		for kind in domains cidrs services; do
+			path="$(input_file "$token" "$kind")"
+			[ -f "$path" ] && [ ! -L "$path" ] || {
+				echo "missing staged $kind input" >&2
+				exit 1
+			}
+		done
 		action_id="$(date +%s)-$$"
-		printf '%s\n' "$action_id" > "$pending_file"
+		mkdir -p "$pending_dir"
+		find "$status_dir" -type f -mtime +7 -exec rm -f {} \; 2>/dev/null || true
+		printf '%s\n' "$token" >"$pending_dir/$action_id"
+		write_simple_status "$action_id" running 'Queued...' || {
+			rm -f "$pending_dir/$action_id"
+			exit 1
+		}
 		# rpcd's `file exec` reads the child's stdout until EOF, so a plain
 		# background/setsid job keeps the pipe open and the caller blocks until
 		# the ubus timeout (~30s). start-stop-daemon -b fully daemonizes —
 		# closing every inherited descriptor — so rpcd gets EOF immediately and
 		# the rebuild proceeds detached.
 		if command -v start-stop-daemon >/dev/null 2>&1; then
-			start-stop-daemon -b -q -S -x "$0" -- _run
+			if ! start-stop-daemon -b -q -S -x "$0" -- _run; then
+				rm -f "$pending_dir/$action_id"
+				write_simple_status "$action_id" error 'Unable to start the community update worker' || true
+				exit 1
+			fi
 		else
 			setsid "$0" _run </dev/null >/dev/null 2>&1 &
 		fi
@@ -318,10 +526,25 @@ case "${1:-}" in
 		run_scheduled
 		;;
 	apply)
+		pid_lock_acquire "$lock_dir" || {
+			echo 'another community update is already running' >&2
+			exit 1
+		}
+		trap 'pid_lock_release "$lock_dir"' EXIT INT TERM
 		apply_once
 		;;
+	_apply-input)
+		apply_staged_input "${2:-}" "${3:-}"
+		;;
+	status)
+		action_id="${2:-}"
+		case "$action_id" in
+			'' | *[!0-9-]*) echo 'invalid action id' >&2; exit 2 ;;
+		esac
+		cat "$status_dir/$action_id.status" 2>/dev/null || printf 'state=idle\n'
+		;;
 	*)
-		echo "usage: $0 {catalog|ip-services|schedule|apply}" >&2
+		echo "usage: $0 {catalog|ip-services|schedule TOKEN|status ACTION_ID|apply}" >&2
 		exit 2
 		;;
 esac

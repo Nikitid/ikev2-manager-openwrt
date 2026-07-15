@@ -3,10 +3,10 @@
 status_file='/var/run/ikev2-health.status'
 volatile_set_dump='/var/run/pbr-ikev2-set4.dump'
 persistent_set_dump='/etc/ikev2-manager/pbr-set4.dump'
+volatile_set6_dump='/var/run/pbr-ikev2-set6.dump'
+persistent_set6_dump='/etc/ikev2-manager/pbr-set6.dump'
 probe_state='/var/run/ikev2-health-probe.state'
-recovery_stamp='/var/run/ikev2-health-recovery.last'
 probe_interval=20
-probe_fail_limit=2
 
 has_proxy4() {
 	printf '%s' "$1" | grep -q 'name=proxy4[^{}]* state=INSTALLED'
@@ -44,32 +44,20 @@ save_probe() {
 	mv "${probe_state}.new" "$probe_state"
 }
 
-recover_stale_tunnel() {
-	now="$1"
-	cooldown="$(uci -q get ikev2-manager.client.reconnect_cooldown || echo 15)"
-	case "$cooldown" in '' | *[!0-9]*) cooldown=15 ;; esac
-	last="$(cat "$recovery_stamp" 2>/dev/null || echo 0)"
-	case "$last" in '' | *[!0-9]*) last=0 ;; esac
-	[ $((now - last)) -ge "$cooldown" ] || return 0
-	[ ! -d /var/run/ikev2-action.lock ] || return 0
-	printf '%s\n' "$now" >"$recovery_stamp"
-	/usr/libexec/ikev2-manager reconnect-client >/dev/null 2>&1 || :
-}
-
 domain_set_name() {
+	local family="$1"
 	nft list table inet fw4 2>/dev/null |
-		sed -n 's/^[[:space:]]*set \(pbr_ikev2out_4_dst_ip_[^[:space:]]*\) {.*/\1/p' |
+		sed -n "s/^[[:space:]]*set \(pbr_ikev2out_${family}_dst_ip_[^[:space:]]*\) {.*/\1/p" |
 		grep -v '_user$' | head -n1
 }
 
 # Persist the PBR domain set so pbr.user.ikev2out can restore it after a
-# firewall/pbr restart. Without this, clients with warm DNS caches leak the
-# selected domains straight to WAN until dnsmasq repopulates the set. IPv4
-# only: the outbound tunnel is v4-only, the v6 set is never populated.
-dump_pbr_sets() {
-	set_name="$(domain_set_name)"
+# firewall/pbr restart. Without this, clients with warm DNS caches can bypass
+# policy until dnsmasq repopulates the IPv4 and IPv6 sets.
+dump_pbr_set() {
+	local family="$1" dump="$2" set_name
+	set_name="$(domain_set_name "$family")"
 	[ -n "$set_name" ] || return 0
-	dump="$volatile_set_dump"
 	nft list set inet fw4 "$set_name" 2>/dev/null |
 		sed -n '/elements = {/,/}/p' | tr -d '\n\t' |
 		sed 's/.*{//; s/}.*//' | tr ',' '\n' |
@@ -81,13 +69,24 @@ dump_pbr_sets() {
 	fi
 }
 
+dump_pbr_sets() {
+	dump_pbr_set 4 "$volatile_set_dump"
+	dump_pbr_set 6 "$volatile_set6_dump"
+}
+
 persist_pbr_sets() {
 	dump_pbr_sets
-	[ -s "$volatile_set_dump" ] || return 0
 	mkdir -p "${persistent_set_dump%/*}"
-	cp "$volatile_set_dump" "${persistent_set_dump}.new"
-	chmod 600 "${persistent_set_dump}.new"
-	mv "${persistent_set_dump}.new" "$persistent_set_dump"
+	if [ -s "$volatile_set_dump" ]; then
+		cp "$volatile_set_dump" "${persistent_set_dump}.new"
+		chmod 600 "${persistent_set_dump}.new"
+		mv "${persistent_set_dump}.new" "$persistent_set_dump"
+	fi
+	if [ -s "$volatile_set6_dump" ]; then
+		cp "$volatile_set6_dump" "${persistent_set6_dump}.new"
+		chmod 600 "${persistent_set6_dump}.new"
+		mv "${persistent_set6_dump}.new" "$persistent_set6_dump"
+	fi
 }
 
 service_cidr_policy_healthy() {
@@ -109,18 +108,17 @@ ensure_service_cidr_policy() {
 trap 'persist_pbr_sets; exit 0' INT TERM
 
 while true; do
+	if [ "$(uci -q get ikev2-manager.globals.configured)" != 1 ]; then
+		printf 'state=disabled updated=%s\n' "$(date +%s)" >"$status_file"
+		sleep 60
+		continue
+	fi
+
 	if [ "$(uci -q get ikev2-manager.domains.engine)" = fakeip ] &&
 	   [ -x /usr/libexec/ikev2-domain-router ]; then
 		/usr/libexec/ikev2-domain-router ensure >/dev/null 2>&1 || :
 	fi
 	ensure_service_cidr_policy
-
-	if [ "$(uci -q get ikev2-manager.globals.configured)" != 1 ] &&
-		! ip link show ipsec-out >/dev/null 2>&1; then
-		printf 'state=disabled updated=%s\n' "$(date +%s)" >"$status_file"
-		sleep 60
-		continue
-	fi
 
 	/etc/init.d/ikev2-xfrm start
 
@@ -154,15 +152,10 @@ while true; do
 				fi
 				save_probe "$now" "$failures"
 			fi
-			if [ "$failures" -ge "$probe_fail_limit" ]; then
-				printf 'state=degraded updated=%s probe_failures=%s\n' \
-					"$now" "$failures" >"$status_file"
-				recover_stale_tunnel "$now"
-				save_probe "$now" 0
-			else
-				printf 'state=up updated=%s probe_failures=%s\n' \
-					"$now" "$failures" >"$status_file"
-			fi
+			# Public endpoints are independent third parties. Probe failures are
+			# telemetry only and must not tear down an otherwise installed SA.
+			printf 'state=up updated=%s probe_failures=%s\n' \
+				"$now" "$failures" >"$status_file"
 		else
 			printf 'state=degraded updated=%s\n' "$(date +%s)" >"$status_file"
 		fi

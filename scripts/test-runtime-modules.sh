@@ -26,11 +26,34 @@ rmdir "$action_lock_dir"
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/ip" <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >>"$TEST_IP_LOG"
 case "$*" in
 	"-4 route show table pbr_ikev2out")
-		[ "${MOCK_FAILCLOSED_MISSING:-0}" = 1 ] || echo 'unreachable default metric 32767'
+		if [ "${MOCK_FAILCLOSED_MISSING:-0}" != 1 ]; then
+			echo 'unreachable default metric 32767'
+			[ "${MOCK_TUNNEL_ROUTE:-0}" != 1 ] || echo 'default dev ipsec-out metric 10'
+		fi
+		;;
+	"-4 rule show")
+		[ "${MOCK_FAILCLOSED_RULE_MISSING:-0}" = 1 ] ||
+			echo '30000: from all fwmark 0x10000/0xff0000 lookup pbr_ikev2out'
+		;;
+	"-6 route show table pbr_ikev2out")
+		[ "${MOCK_FAILCLOSED6_MISSING:-0}" = 1 ] || echo 'unreachable default metric 32767'
+		;;
+	"-6 rule show")
+		[ "${MOCK_FAILCLOSED6_RULE_MISSING:-0}" = 1 ] ||
+			echo '30000: from all fwmark 0x10000/0xff0000 lookup pbr_ikev2out'
+		;;
+	"-6 route get "*)
+		echo 'RTNETLINK answers: Network is unreachable' >&2
+		exit 2
 		;;
 	"-4 route get "*)
+		if [ "${MOCK_TUNNEL_ROUTE:-0}" = 1 ]; then
+			echo '203.0.113.77 dev ipsec-out src 10.20.20.14 mark 0x20000'
+			exit 0
+		fi
 		echo 'RTNETLINK answers: Network is unreachable' >&2
 		exit 2
 		;;
@@ -48,6 +71,8 @@ EOF
 chmod 755 "$tmp/bin/ip" "$tmp/bin/nslookup"
 
 PATH="$tmp/bin:$PATH"
+TEST_IP_LOG="$tmp/ip.log"
+export TEST_IP_LOG
 export PATH
 # shellcheck source=/dev/null
 . "$root/ikev2-manager-runtime/lib/routing.sh"
@@ -64,8 +89,30 @@ if wait_for_router_dns 127.0.0.1 1 openwrt.org; then
 fi
 
 failclosed_check
+MOCK_TUNNEL_ROUTE=1 failclosed_check
+if grep -Eq '(^| )(add|del|delete|flush|replace)( |$)' "$TEST_IP_LOG"; then
+	echo 'failclosed_check modified routing state' >&2
+	exit 1
+fi
 if MOCK_FAILCLOSED_MISSING=1 failclosed_check; then
 	echo 'failclosed_check accepted a table without unreachable default' >&2
+	exit 1
+fi
+if MOCK_FAILCLOSED_RULE_MISSING=1 failclosed_check; then
+	echo 'failclosed_check accepted a table without a matching policy rule' >&2
+	exit 1
+fi
+failclosed_ipv6_check
+if MOCK_FAILCLOSED6_MISSING=1 failclosed_ipv6_check; then
+	echo 'failclosed_ipv6_check accepted a table without unreachable default' >&2
+	exit 1
+fi
+if MOCK_FAILCLOSED6_RULE_MISSING=1 failclosed_ipv6_check; then
+	echo 'failclosed_ipv6_check accepted a table without a matching policy rule' >&2
+	exit 1
+fi
+if grep -Eq '(^| )(add|del|delete|flush|replace)( |$)' "$TEST_IP_LOG"; then
+	echo 'fail-closed validation modified routing state' >&2
 	exit 1
 fi
 
@@ -77,8 +124,19 @@ printf x >"$pkg_cache/dnsmasq-2.93-r1.apk"
 printf x >"$pkg_cache/dnsmasq-full-2.93-r1.apk"
 cat >"$tmp/bin/opkg" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$*" >>"$TEST_OPKG_LOG"
+printf '%s\n' "$*" >>"${TEST_OPKG_LOG:-/dev/null}"
 case "$1" in
+	compare-versions)
+		[ "$3" = ge ] || exit 1
+		case "$2:$4" in
+			6.0.7:6.0.3 | 6.0.7:6.0.7 | 6.0.3:6.0.3) exit 0 ;;
+			*) exit 1 ;;
+		esac
+		;;
+	status)
+		[ "$2" = strongswan ] &&
+			printf 'Version: %s\n' "${TEST_STRONGSWAN_VERSION:-6.0.7}"
+		;;
 	remove | install) exit 0 ;;
 	list-installed) printf '%s 1\n' "$2"; exit 0 ;;
 	*) exit 1 ;;
@@ -88,6 +146,14 @@ chmod 755 "$tmp/bin/opkg"
 
 IKEV2_PACKAGE_MANAGER=opkg
 export IKEV2_PACKAGE_MANAGER
+TEST_STRONGSWAN_VERSION=6.0.7
+export TEST_STRONGSWAN_VERSION
+pkg_version_at_least strongswan 6.0.3
+TEST_STRONGSWAN_VERSION=6.0.3
+if pkg_version_at_least strongswan 6.0.7; then
+	echo 'opkg version comparison accepted an older strongSwan release' >&2
+	exit 1
+fi
 [ "$(basename "$(pkg_package_file "$pkg_cache" dnsmasq-full)")" = dnsmasq-full_2.93-r1_all.ipk ] || {
 	echo 'opkg package lookup did not select the .ipk file' >&2
 	exit 1
@@ -104,15 +170,34 @@ pkg_restore_dnsmasq "$pkg_cache" dnsmasq
 grep -qx 'remove --force-depends dnsmasq' "$TEST_OPKG_LOG"
 grep -qx "install $pkg_cache/dnsmasq-full_2.93-r1_all.ipk" "$TEST_OPKG_LOG"
 grep -qx "install $pkg_cache/dnsmasq_2.93-r1_all.ipk" "$TEST_OPKG_LOG"
+grep -qx 'remove --force-depends dnsmasq-full' "$TEST_OPKG_LOG"
 
 cat >"$tmp/bin/apk" <<'EOF'
 #!/bin/sh
 printf '%s\n' "$*" >>"${TEST_APK_LOG:-/dev/null}"
+installed="${TEST_APK_INSTALLED:-}"
+[ -z "${TEST_APK_STATE:-}" ] || installed="$(cat "$TEST_APK_STATE" 2>/dev/null || true)"
 case "$1 $2 $3 $4" in
 	"list --installed --manifest pbr") echo 'pbr 1.2.2-r18' ;;
-	"info -e "*) case " ${TEST_APK_INSTALLED:-} " in *" $3 "*) exit 0;; *) exit 1;; esac ;;
-	"add dnsmasq-full  ") exit 0 ;;
-	"del dnsmasq-full  " | "del pbr strongswan ") exit 0 ;;
+	"list --installed --manifest strongswan")
+		echo "strongswan ${TEST_STRONGSWAN_VERSION:-6.0.7}"
+		;;
+	"info -e "*) case " $installed " in *" $3 "*) exit 0;; *) exit 1;; esac ;;
+	"add dnsmasq-full  ")
+		[ -z "${TEST_APK_STATE:-}" ] || printf '%s\n' 'dnsmasq-full' >"$TEST_APK_STATE"
+		exit 0
+		;;
+	"add dnsmasq  ")
+		[ -z "${TEST_APK_STATE:-}" ] || printf '%s\n' 'dnsmasq dnsmasq-full' >"$TEST_APK_STATE"
+		exit 0
+		;;
+	"version -t 6.0.7 6.0.3") echo '>' ;;
+	"version -t 6.0.3 6.0.7") echo '<' ;;
+	"del dnsmasq-full  ")
+		[ -z "${TEST_APK_STATE:-}" ] || printf '%s\n' 'dnsmasq' >"$TEST_APK_STATE"
+		exit 0
+		;;
+	"del pbr strongswan ") exit 0 ;;
 	*) exit 1 ;;
 esac
 EOF
@@ -123,6 +208,13 @@ EOF
 chmod 755 "$tmp/bin/apk" "$tmp/bin/dnsmasq"
 
 IKEV2_PACKAGE_MANAGER=apk
+TEST_STRONGSWAN_VERSION=6.0.7
+pkg_version_at_least strongswan 6.0.3
+TEST_STRONGSWAN_VERSION=6.0.3
+if pkg_version_at_least strongswan 6.0.7; then
+	echo 'apk version comparison accepted an older strongSwan release' >&2
+	exit 1
+fi
 TEST_APK_INSTALLED=pbr
 export TEST_APK_INSTALLED
 [ "$(basename "$(pkg_package_file "$pkg_cache" dnsmasq-full)")" = dnsmasq-full-2.93-r1.apk ] || {
@@ -152,9 +244,14 @@ export TEST_APK_LOG
 : >"$TEST_APK_LOG"
 pkg_switch_dnsmasq_full "$pkg_cache" dnsmasq
 grep -qx 'add dnsmasq-full' "$TEST_APK_LOG"
-TEST_APK_INSTALLED='dnsmasq dnsmasq-full'
+TEST_APK_STATE="$tmp/apk.state"
+export TEST_APK_STATE
+printf '%s\n' dnsmasq-full >"$TEST_APK_STATE"
 pkg_restore_dnsmasq "$pkg_cache" dnsmasq
+grep -qx 'add dnsmasq' "$TEST_APK_LOG"
 grep -qx 'del dnsmasq-full' "$TEST_APK_LOG"
+[ "$(cat "$TEST_APK_STATE")" = dnsmasq ]
+unset TEST_APK_STATE
 TEST_APK_INSTALLED='pbr strongswan'
 : >"$TEST_APK_LOG"
 pkg_remove_runtime pbr missing strongswan
@@ -165,6 +262,62 @@ TEST_DNSMASQ_OPTION=nftset pkg_dnsmasq_has_nftset || {
 }
 if TEST_DNSMASQ_OPTION=no-nftset pkg_dnsmasq_has_nftset; then
 	echo 'dnsmasq no-nftset was accepted as nftset support' >&2
+	exit 1
+fi
+
+grep -Fq '[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || return 1' \
+	"$root/ikev2-manager-runtime/ikev2-xfrm.init"
+if grep -Fq 'strongswan-security server' \
+	"$root/ikev2-manager-runtime/ikev2-xfrm.init"; then
+	echo 'inbound XFRM is still blocked by the strongSwan advisory' >&2
+	exit 1
+fi
+grep -Fq '[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || return 0' \
+	"$root/ikev2-manager-runtime/pbr.user.ikev2out"
+grep -Fq "grep -Eq '^unreachable default( |$)'" \
+	"$root/ikev2-manager-runtime/pbr.user.ikev2out"
+if grep -Fq 'reconnect-client' "$root/ikev2-manager-runtime/ikev2-health.sh"; then
+	echo 'health watcher still reconnects an installed SA after public probe failures' >&2
+	exit 1
+fi
+if sed -n '/run_remove_deps()/,/^}/p' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh" | grep -Fq '/etc/init.d/pbr stop'; then
+	echo 'dependency removal still stops restored user PBR state' >&2
+	exit 1
+fi
+grep -Fq 'fail "cleanup helper is missing; package removal stopped before changing files"' \
+	"$root/Makefile"
+grep -Fq 'fail "unable to restore managed router state; package removal stopped before changing files"' \
+	"$root/Makefile"
+if grep -Fq 'route flush table' "$root/ikev2-manager-runtime/ikev2-domain-router.sh"; then
+	echo 'FakeIP cleanup still flushes an entire routing table' >&2
+	exit 1
+fi
+grep -Fq "tproxy_table='51820'" "$root/ikev2-manager-runtime/ikev2-domain-router.sh"
+grep -Fq "tproxy_priority='11000'" "$root/ikev2-manager-runtime/ikev2-domain-router.sh"
+if grep -Fq '"routing_mark"' "$root/ikev2-manager-runtime/ikev2-domain-router.sh"; then
+	echo 'FakeIP config still contains a hard-coded PBR routing mark' >&2
+	exit 1
+fi
+grep -Fq 'strongswan_eap_server_security=notice:' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh"
+if grep -Fq 'Inbound server is blocked: installed strongSwan is unsafe for EAP-MSCHAPv2.' \
+	"$root/luci-ikev2-manager/ikev2-manager.sh"; then
+	echo 'inbound profile rendering is still blocked by the strongSwan advisory' >&2
+	exit 1
+fi
+grep -Fq 'Outbound client is blocked: installed strongSwan is unsafe for EAP-MSCHAPv2.' \
+	"$root/luci-ikev2-manager/ikev2-manager.sh"
+if grep -Fq 'Inbound custom configuration is blocked by the installed strongSwan version' \
+	"$root/luci-ikev2-manager/ikev2-manager.sh"; then
+	echo 'inbound custom profiles are still blocked by the strongSwan advisory' >&2
+	exit 1
+fi
+grep -Fq 'Outbound custom configuration is blocked by the installed strongSwan version' \
+	"$root/luci-ikev2-manager/ikev2-manager.sh"
+if grep -Fq '/usr/libexec/ikev2-manager-system strongswan-security server' \
+	"$root/ikev2-manager-runtime/ikev2-health.sh"; then
+	echo 'inbound health recovery is still blocked by the strongSwan advisory' >&2
 	exit 1
 fi
 

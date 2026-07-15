@@ -6,7 +6,8 @@ root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
-mkdir -p "$tmp/bin" "$tmp/local" "$tmp/cache"
+mkdir -p "$tmp/bin" "$tmp/local" "$tmp/cache" "$tmp/runtime"
+cp "$root/ikev2-manager-runtime/lib/actions.sh" "$tmp/runtime/actions.sh"
 
 cat >"$tmp/bin/uclient-fetch" <<'EOF'
 #!/bin/sh
@@ -40,6 +41,10 @@ EOF
 chmod 755 "$tmp/bin/uclient-fetch"
 cat >"$tmp/bin/restart-helper" <<'EOF'
 #!/bin/sh
+[ ! -f "$TEST_RESTART_FAIL" ] || {
+	rm -f "$TEST_RESTART_FAIL"
+	exit 1
+}
 exit 0
 EOF
 chmod 755 "$tmp/bin/restart-helper"
@@ -55,7 +60,7 @@ printf '%s\n' direct local remote >"$tmp/selected"
 : >"$tmp/manual"
 printf '%s\n' 203.0.113.10 198.51.100.0/24 >"$tmp/manual-cidrs"
 
-run_helper() {
+run_helper() (
 	PATH="$tmp/bin:$PATH" \
 	IKEV2_MANUAL_FILE="$tmp/manual" \
 	IKEV2_MANUAL_CIDR_FILE="$tmp/manual-cidrs" \
@@ -64,14 +69,18 @@ run_helper() {
 	IKEV2_CIDR_FILE="$tmp/cidrs" \
 	IKEV2_CACHE_DIR="$tmp/cache" \
 	IKEV2_STATUS_FILE="$tmp/status" \
+	IKEV2_STATUS_DIR="$tmp/status.d" \
 	IKEV2_LOG_FILE="$tmp/log" \
 	IKEV2_LOCK_DIR="$tmp/lock" \
-	IKEV2_PENDING_FILE="$tmp/pending" \
+	IKEV2_PENDING_DIR="$tmp/pending.d" \
+	IKEV2_INPUT_PREFIX="$tmp/input" \
 	IKEV2_RESTART_HELPER="$tmp/bin/restart-helper" \
+	IKEV2_RUNTIME_LIB_DIR="$tmp/runtime" \
 	IKEV2_LOCAL_SERVICES_DIR="$tmp/local" \
 	IKEV2_RAW_BASE=https://lists.invalid \
+	TEST_RESTART_FAIL="$tmp/restart.fail" \
 		sh "$root/luci-ikev2-domains/community-domains.sh" "$@"
-}
+)
 
 run_helper apply
 printf '%s\n' direct.example local.example remote.example |
@@ -94,5 +103,63 @@ if run_helper apply >/dev/null 2>&1; then
 fi
 cmp -s "$tmp/domains.before" "$tmp/domains"
 cmp -s "$tmp/cidrs.before" "$tmp/cidrs"
+cat >"$tmp/local/direct.cidrs" <<'EOF'
+91.108.4.0/22
+149.154.160.0/20
+EOF
+
+printf '%s\n' direct.example >"$tmp/local/direct.lst"
+printf '%s\n' '.invalid.example' >"$tmp/manual"
+if run_helper apply >/dev/null 2>&1; then
+	printf 'invalid domain unexpectedly succeeded\n' >&2
+	exit 1
+fi
+cmp -s "$tmp/domains.before" "$tmp/domains"
+printf '%s\n' local.example >"$tmp/manual"
+
+if IKEV2_MAX_SELECTED_SERVICES=2 run_helper apply >/dev/null 2>&1; then
+	printf 'selected-service resource limit unexpectedly succeeded\n' >&2
+	exit 1
+fi
+unset IKEV2_MAX_SELECTED_SERVICES
+cmp -s "$tmp/domains.before" "$tmp/domains"
+
+printf '%s\n' changed.example >"$tmp/local/local.lst"
+: >"$tmp/restart.fail"
+if run_helper apply >/dev/null 2>&1; then
+	printf 'failed PBR restart unexpectedly succeeded\n' >&2
+	exit 1
+fi
+cmp -s "$tmp/domains.before" "$tmp/domains"
+cmp -s "$tmp/cidrs.before" "$tmp/cidrs"
+
+printf '%s\n' local.example >"$tmp/local/local.lst"
+printf '%s\n' staged.example >"$tmp/input-12345678.domains"
+printf '%s\n' 192.0.2.0/24 >"$tmp/input-12345678.cidrs"
+printf '%s\n' local >"$tmp/input-12345678.services"
+run_helper _apply-input 100-1 12345678
+printf '%s\n' local.example staged.example | cmp -s - "$tmp/domains"
+printf '%s\n' 192.0.2.0/24 | cmp -s - "$tmp/cidrs"
+printf '%s\n' staged.example | cmp -s - "$tmp/manual"
+printf '%s\n' 192.0.2.0/24 | cmp -s - "$tmp/manual-cidrs"
+printf '%s\n' local | cmp -s - "$tmp/selected"
+[ ! -e "$tmp/input-12345678.domains" ]
+[ ! -e "$tmp/input-12345678.cidrs" ]
+[ ! -e "$tmp/input-12345678.services" ]
+
+for name in manual manual-cidrs selected domains cidrs; do
+	cp "$tmp/$name" "$tmp/$name.staged-before"
+done
+printf '%s\n' rejected.example >"$tmp/input-abcdefgh.domains"
+printf '%s\n' 198.51.100.0/24 >"$tmp/input-abcdefgh.cidrs"
+: >"$tmp/input-abcdefgh.services"
+: >"$tmp/restart.fail"
+if run_helper _apply-input 100-2 abcdefgh >/dev/null 2>&1; then
+	printf 'failed staged update unexpectedly succeeded\n' >&2
+	exit 1
+fi
+for name in manual manual-cidrs selected domains cidrs; do
+	cmp -s "$tmp/$name.staged-before" "$tmp/$name"
+done
 
 printf 'community domain tests OK\n'

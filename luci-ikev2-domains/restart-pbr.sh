@@ -1,14 +1,21 @@
 #!/bin/sh
 
-lock_dir='/var/run/ikev2-domains-pbr-restart.lock'
-global_lock_dir='/var/run/ikev2-action.lock'
-global_lock_status='/var/run/ikev2-action.lock.status'
-log_file='/tmp/ikev2-domains-pbr-restart.log'
+lock_dir="${IKEV2_PBR_RESTART_LOCK:-/var/run/ikev2-domains-pbr-restart.lock}"
+global_lock_dir="${IKEV2_ACTION_LOCK:-/var/run/ikev2-action.lock}"
+global_lock_status="${IKEV2_ACTION_LOCK_STATUS:-/var/run/ikev2-action.lock.status}"
+log_file="${IKEV2_PBR_RESTART_LOG:-/tmp/ikev2-domains-pbr-restart.log}"
 action_lock_dir="$global_lock_dir"
 action_lock_status="$global_lock_status"
+runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-/usr/libexec/ikev2-manager.d}"
+system_helper="${IKEV2_SYSTEM_HELPER:-/usr/libexec/ikev2-manager-system}"
+domain_router_helper="${IKEV2_DOMAIN_ROUTER_HELPER:-/usr/libexec/ikev2-domain-router}"
+xfrm_init="${IKEV2_XFRM_INIT:-/etc/init.d/ikev2-xfrm}"
+pbr_init="${IKEV2_PBR_INIT:-/etc/init.d/pbr}"
+sync_vips_helper="${IKEV2_SYNC_VIPS:-/usr/libexec/ikev2-sync-vips}"
+pbr_user_helper="${IKEV2_PBR_USER:-/usr/share/pbr/pbr.user.ikev2out}"
 
-. /usr/libexec/ikev2-manager.d/actions.sh
-. /usr/libexec/ikev2-manager.d/routing.sh
+. "$runtime_lib_dir/actions.sh"
+. "$runtime_lib_dir/routing.sh"
 
 drop_reclassified_connections() {
 	command -v conntrack >/dev/null 2>&1 || return 0
@@ -50,38 +57,86 @@ drop_reclassified_connections() {
 	fi
 }
 
-(
-	sleep 1
-
-	# Serialize this restart with Overview/server/client actions. Wait instead of
-	# failing: the UI has already saved the requested policy change.
-	acquire_action_lock pbr-restart domains || exit 1
-
-	if ! mkdir "$lock_dir" 2>/dev/null; then
-		rm -f "$global_lock_status"
-		rmdir "$global_lock_dir" 2>/dev/null || true
-		exit 0
+perform_restart() {
+	"$system_helper" _sync-pbr || return 1
+	if [ "$(uci -q get ikev2-manager.domains.engine 2>/dev/null || true)" = fakeip ] &&
+	   [ -x "$domain_router_helper" ]; then
+		"$domain_router_helper" refresh || return 1
 	fi
+	"$xfrm_init" start || return 1
+	if [ "$(uci -q get ikev2-manager.client.enabled 2>/dev/null || echo 0)" = 1 ]; then
+		"$sync_vips_helper" || return 1
+	fi
+	"$pbr_init" restart || return 1
+	"$pbr_init" running || return 1
+	wait_for_router_dns 127.0.0.1 20 openwrt.org || return 1
+	"$system_helper" failclosed-check || return 1
+	ensure_forward_chain || return 1
+	"$xfrm_init" start || return 1
+	if [ "$(uci -q get ikev2-manager.client.enabled 2>/dev/null || echo 0)" = 1 ]; then
+		"$sync_vips_helper" || return 1
+	fi
+	"$pbr_user_helper" || return 1
+	drop_reclassified_connections
+}
 
-	trap 'rmdir "$lock_dir"; rm -f "$global_lock_status"; rmdir "$global_lock_dir" 2>/dev/null || true' EXIT
-	{
-		/usr/libexec/ikev2-manager-system _sync-pbr
-		if [ "$(uci -q get ikev2-manager.domains.engine)" = fakeip ] &&
-		   [ -x /usr/libexec/ikev2-domain-router ]; then
-			/usr/libexec/ikev2-domain-router refresh
+run_restart() {
+	lock_held="${1:-0}"
+	global_owned=0
+	if [ "$lock_held" != 1 ]; then
+		acquire_action_lock pbr-restart domains || return 1
+		global_owned=1
+	fi
+	if ! pid_lock_acquire "$lock_dir"; then
+		if [ "$global_owned" = 1 ]; then
+			rm -f "$global_lock_status"
+			rmdir "$global_lock_dir" 2>/dev/null || true
 		fi
-		/etc/init.d/ikev2-xfrm start
-		/usr/libexec/ikev2-sync-vips
-		/etc/init.d/pbr restart
-		/etc/init.d/pbr running
-		wait_for_router_dns 127.0.0.1 20 openwrt.org
-		/usr/libexec/ikev2-manager-system failclosed-check
-		ensure_forward_chain
-		/etc/init.d/ikev2-xfrm start
-		/usr/libexec/ikev2-sync-vips
-		/usr/share/pbr/pbr.user.ikev2out
-		drop_reclassified_connections
-	} >"$log_file" 2>&1
-) </dev/null >/dev/null 2>&1 &
+		return 1
+	fi
+	cleanup_restart() {
+		pid_lock_release "$lock_dir"
+		if [ "$global_owned" = 1 ]; then
+			rm -f "$global_lock_status"
+			rmdir "$global_lock_dir" 2>/dev/null || true
+		fi
+	}
+	trap cleanup_restart EXIT INT TERM
+	if perform_restart >"$log_file" 2>&1; then
+		result=0
+	else
+		result=1
+	fi
+	trap - EXIT INT TERM
+	cleanup_restart
+	return "$result"
+}
 
-exit 0
+schedule_restart() {
+	if command -v start-stop-daemon >/dev/null 2>&1; then
+		start-stop-daemon -b -q -S -x "$0" -- _run
+	else
+		setsid "$0" _run </dev/null >/dev/null 2>&1 &
+	fi
+}
+
+case "${1:-}" in
+	--wait)
+		if [ "${2:-}" = --lock-held ]; then
+			run_restart 1
+		else
+			run_restart 0
+		fi
+		;;
+	_run)
+		sleep 1
+		run_restart 0
+		;;
+	'')
+		schedule_restart
+		;;
+	*)
+		printf 'usage: %s [--wait [--lock-held]]\n' "$0" >&2
+		exit 2
+		;;
+esac

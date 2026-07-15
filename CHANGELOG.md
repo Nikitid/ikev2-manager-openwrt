@@ -4,13 +4,23 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
-## 1.1.0_rc1 - 2026-07-13
+## 1.1.0 - 2026-07-15
 
 - Standardized all LuCI actions on local inline status feedback instead of
   global notifications.
 - Refreshed users, counters, runtime state, DNS, ACME and routing status after
   successful actions without requiring a manual page reload.
-- Added UI contract and VPN-user regression checks for asynchronous actions.
+- Made client, inbound server, DNS, device and dependency changes transactional,
+  with validation and rollback to the previous working state on failure.
+- Hardened dependency installation and removal for both `opkg` and `apk`,
+  including safe restoration of the original dnsmasq provider and settings.
+- Added IPv6 fail-closed routing for selected traffic while keeping Reliable DNS
+  on IPv4-only upstreams to prevent resolver traffic from bypassing the tunnel.
+- Added strongSwan version diagnostics. Older inbound-server versions remain
+  available with a non-blocking compatibility notice; unsafe outbound EAP
+  client versions are rejected.
+- Expanded regression coverage for asynchronous UI actions, ACME settings,
+  package state, transactions, runtime validation and certificate chains.
 
 ## 1.0.10 - 2026-07-12
 

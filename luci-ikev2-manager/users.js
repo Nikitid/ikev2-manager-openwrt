@@ -60,8 +60,9 @@ function runUserAction(button, args, result, success, opts) {
 
 function runUserSecretAction(button, action, user, password, result, success, onSuccess) {
 	var payload = [ action, user, password ].join('\n') + '\n';
-	return fs.write('/var/run/ikev2-manager-user.in', payload, 384 /* 0600 */).then(function() {
-		return runUserAction(button, [ 'user-secret-set' ], result, success, {
+	var token = common.inputToken();
+	return fs.write('/var/run/ikev2-manager-user-' + token + '.in', payload, 384 /* 0600 */).then(function() {
+		return runUserAction(button, [ 'user-secret-set', token ], result, success, {
 			onSuccess: onSuccess
 		});
 	}, function(error) {
@@ -78,10 +79,10 @@ function passwordDialog(title, username, action, includeUsername, pageResult, re
 		'autocomplete': 'off'
 	});
 	var password = E('input', {
-		'type': 'text',
+		'type': 'password',
 		'class': 'cbi-input-text',
 		'placeholder': _('Password'),
-		'autocomplete': 'off'
+		'autocomplete': 'new-password'
 	});
 	var fields = [];
 	var dialogResult = common.inlineResult();
@@ -90,7 +91,7 @@ function passwordDialog(title, username, action, includeUsername, pageResult, re
 		fields.push(common.fieldLabel(_('Username'), _('Letters, digits, dot, dash and underscore.')));
 		fields.push(name);
 	}
-	fields.push(common.fieldLabel(_('Password'), _('Visible by design to LuCI administrators.')));
+	fields.push(common.fieldLabel(_('Password')));
 	fields.push(password);
 
 	ui.showModal(title, [

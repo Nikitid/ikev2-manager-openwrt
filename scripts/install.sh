@@ -52,71 +52,16 @@ pkg_install() {
 	esac
 }
 
-legacy_installed() {
-	case "$package_manager" in
-		opkg) opkg status luci-app-ikev2-pbr 2>/dev/null | grep -q '^Status: .* installed' ;;
-		apk) apk info -e luci-app-ikev2-pbr >/dev/null 2>&1 ;;
-		*) return 1 ;;
-	esac
-}
-
-legacy_remove() {
-	case "$package_manager" in
-		opkg) opkg remove luci-app-ikev2-pbr ;;
-		apk) apk del luci-app-ikev2-pbr ;;
-		*) return 1 ;;
-	esac
-}
-
 backup="/tmp/ikev2-manager-install-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
 sysupgrade -b "$backup"
 printf 'Configuration backup: %s\n' "$backup"
 
 pkg_update
-legacy=0
-migration_dir="/tmp/ikev2-manager-migration-$$"
-if legacy_installed; then
-	legacy=1
-	printf 'Migrating legacy package luci-app-ikev2-pbr...\n'
-	mkdir -p "$migration_dir"
-	for file in \
-		/etc/config/ikev2-manager \
-		/etc/pbr-ikev2-domains.txt \
-		/etc/pbr-ikev2-domains.manual.txt \
-		/etc/pbr-ikev2-addresses.manual.txt \
-		/etc/pbr-ikev2-community-selected.txt; do
-		[ -e "$file" ] || continue
-		mkdir -p "$migration_dir${file%/*}"
-		cp -p "$file" "$migration_dir$file"
-	done
-	legacy_remove
-elif ! pkg_install_plan "$package"; then
+if ! pkg_install_plan "$package"; then
 	die 'Package preflight failed; no packages were changed'
 fi
 
-if ! pkg_install "$package"; then
-	if [ "$legacy" = 1 ]; then
-		printf 'Legacy package files were removed. Configuration is preserved in place.\n' >&2
-		printf 'Reinstall the previous IPK or restore: %s\n' "$backup" >&2
-	fi
-	die 'Package installation failed'
-fi
-
-if [ "$legacy" = 1 ]; then
-	for file in \
-		/etc/config/ikev2-manager \
-		/etc/pbr-ikev2-domains.txt \
-		/etc/pbr-ikev2-domains.manual.txt \
-		/etc/pbr-ikev2-addresses.manual.txt \
-		/etc/pbr-ikev2-community-selected.txt; do
-		[ -e "$migration_dir$file" ] || continue
-		cp -p "$migration_dir$file" "$file"
-		rm -f "$file-opkg" "$file.apk-new"
-	done
-	rmdir /www/luci-static/resources/view/ikev2-manager-v2 2>/dev/null || true
-	rmdir /www/luci-static/resources/ikev2-manager-v2 2>/dev/null || true
-	rm -rf "$migration_dir"
-fi
+pkg_install "$package" || die "Package installation failed; restore configuration from $backup if needed"
 
 /usr/libexec/ikev2-manager-system _install-deps-run
 

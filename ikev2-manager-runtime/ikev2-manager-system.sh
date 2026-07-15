@@ -11,10 +11,20 @@ uci() {
 }
 
 config='ikev2-manager'
+dns_input_file="${IKEV2_DNS_INPUT:-}"
 
 die() {
 	printf '%s\n' "$*" >&2
 	exit 1
+}
+
+input_file_for() {
+	token="$1"
+	case "$token" in
+		'' | *[!A-Za-z0-9-]* ) die 'Invalid input token' ;;
+	esac
+	[ "${#token}" -ge 8 ] && [ "${#token}" -le 64 ] || die 'Invalid input token'
+	printf '/tmp/ikev2-manager-dns-%s.in\n' "$token"
 }
 
 getv() {
@@ -42,9 +52,22 @@ defaultv() {
 valid_name_list() {
 	value="$(normalize_list "$1")"
 	[ -n "$value" ] || return 1
+	count=0
 	for item in $value; do
+		count=$((count + 1))
+		[ "$count" -le 32 ] || return 1
 		valid_name "$item" || return 1
 	done
+}
+
+valid_device_source() {
+	local value
+	value="$1"
+	case "$value" in
+		'' | *[!0-9./]* | */*/*) return 1 ;;
+		*/*) ipcalc.sh "$value" >/dev/null 2>&1 ;;
+		*) ipcalc.sh "$value/32" >/dev/null 2>&1 ;;
+	esac
 }
 
 set_list() {
@@ -121,6 +144,45 @@ zone_exists() {
 		grep -Fq ".name='$zone'"
 }
 
+zone_name_count() {
+	wanted="$1"
+	index=0
+	count=0
+	while uci -q get "firewall.@zone[$index]" >/dev/null 2>&1; do
+		name="$(uci -q get "firewall.@zone[$index].name" 2>/dev/null || true)"
+		[ "$name" != "$wanted" ] || count=$((count + 1))
+		index=$((index + 1))
+	done
+	printf '%s\n' "$count"
+}
+
+managed_zone_name_available() {
+	name="$1"
+	owner="$2"
+	count="$(zone_name_count "$name")"
+	owner_type="$(uci -q get "firewall.$owner" 2>/dev/null || true)"
+	owner_name="$(uci -q get "firewall.$owner.name" 2>/dev/null || true)"
+	if [ "$owner_type" = zone ] && [ "$owner_name" = "$name" ]; then
+		[ "$count" -eq 1 ]
+	else
+		[ "$count" -eq 0 ]
+	fi
+}
+
+validate_server_zone_names() {
+	[ "$#" -eq 2 ] || die 'Expected inbound and outbound firewall zone names'
+	inbound_zone="$1"
+	outbound_zone="$2"
+	valid_name "$inbound_zone" || die 'Invalid inbound firewall zone name'
+	valid_name "$outbound_zone" || die 'Invalid outbound firewall zone name'
+	[ "$inbound_zone" != "$outbound_zone" ] ||
+		die 'Inbound and outbound firewall zones must be different'
+	managed_zone_name_available "$inbound_zone" ikev2pbr_in ||
+		die "Inbound firewall zone name '$inbound_zone' is already in use"
+	managed_zone_name_available "$outbound_zone" ikev2pbr_out ||
+		die "Outbound firewall zone name '$outbound_zone' is already in use"
+}
+
 compatibility_checks() {
 	release_id='unknown'
 	release='unknown'
@@ -181,23 +243,40 @@ compatibility_checks() {
 		ok=0
 	fi
 
+	install_space_needed=0
+	if ! pkg_dnsmasq_has_nftset 2>/dev/null; then
+		install_space_needed=1
+	else
+		for package in $(runtime_packages); do
+			pkg_installed "$package" || { install_space_needed=1; break; }
+		done
+	fi
+	overlay_required=12288
+	tmp_required=16384
+	if [ "$install_space_needed" = 1 ]; then
+		overlay_required=65536
+		tmp_required=65536
+	fi
+
 	overlay_free="$(df -Pk /overlay 2>/dev/null | awk 'NR == 2 { print $4 }')"
 	[ -n "$overlay_free" ] ||
 		overlay_free="$(df -Pk / 2>/dev/null | awk 'NR == 2 { print $4 }')"
 	case "${overlay_free:-0}" in *[!0-9]*) overlay_free=0 ;; esac
-	if [ "$overlay_free" -ge 12288 ]; then
+	if [ "$overlay_free" -ge "$overlay_required" ]; then
 		printf 'storage_free=ok:%sKiB\n' "$overlay_free"
 	else
-		printf 'storage_free=low:%sKiB\n' "$overlay_free"
+		printf 'storage_free=low:%sKiB-required-%sKiB\n' \
+			"$overlay_free" "$overlay_required"
 		ok=0
 	fi
 
 	tmp_free="$(df -Pk /tmp 2>/dev/null | awk 'NR == 2 { print $4 }')"
 	case "${tmp_free:-0}" in *[!0-9]*) tmp_free=0 ;; esac
-	if [ "$tmp_free" -ge 16384 ]; then
+	if [ "$tmp_free" -ge "$tmp_required" ]; then
 		printf 'tmp_free=ok:%sKiB\n' "$tmp_free"
 	else
-		printf 'tmp_free=low:%sKiB\n' "$tmp_free"
+		printf 'tmp_free=low:%sKiB-required-%sKiB\n' \
+			"$tmp_free" "$tmp_required"
 		ok=0
 	fi
 
@@ -264,16 +343,25 @@ preflight() {
 validate_runtime_config() {
 	wan_interface="$(getv globals wan_interface)"
 	wan_zone="$(getv globals wan_zone)"
+	source_interfaces="$(get_list globals source_interface)"
+	[ -n "$source_interfaces" ] || die 'At least one protected network is required'
 	uci -q get "network.$wan_interface" >/dev/null 2>&1 ||
 		die "WAN network '$wan_interface' does not exist"
 	zone_exists "$wan_zone" ||
 		die "WAN firewall zone '$wan_zone' does not exist"
+	validate_server_zone_names \
+		"$(defaultv server firewall_zone ikev2in)" \
+		"$(defaultv server outbound_zone ikev2out)"
 
-	for interface in $(get_list globals source_interface); do
+	for interface in $source_interfaces; do
+		[ "$interface" != "$wan_interface" ] ||
+			die "WAN network '$wan_interface' cannot be a protected network"
 		uci -q get "network.$interface" >/dev/null 2>&1 ||
 			die "Protected network '$interface' does not exist"
 		network_device "$interface" >/dev/null ||
 			die "Protected network '$interface' has no device"
+		[ "$(zone_for_network "$interface")" != "$wan_zone" ] ||
+			die "Protected network '$interface' belongs to the WAN firewall zone '$wan_zone'"
 	done
 	for zone in $(get_list globals source_zone); do
 		zone_exists "$zone" ||
@@ -344,6 +432,19 @@ doctor() {
 		'') printf 'pbr_version=missing\n'; ok=0 ;;
 		*) printf 'pbr_version=unsupported:%s\n' "$pbr_version"; ok=0 ;;
 	esac
+	strongswan_version="$(pkg_version strongswan)"
+	if pkg_version_at_least strongswan 6.0.3; then
+		printf 'strongswan_eap_client_security=ok:%s\n' "$strongswan_version"
+	else
+		printf 'strongswan_eap_client_security=warn:%s-cve-2025-62291\n' \
+			"${strongswan_version:-missing}"
+	fi
+	if pkg_version_at_least strongswan 6.0.7; then
+		printf 'strongswan_eap_server_security=ok:%s\n' "$strongswan_version"
+	else
+		printf 'strongswan_eap_server_security=notice:%s\n' \
+			"${strongswan_version:-missing}"
+	fi
 	if [ "$(getv globals configured)" = 1 ]; then
 		if failclosed_check; then
 			printf 'failclosed_route=ok\n'
@@ -351,6 +452,11 @@ doctor() {
 			# Report drift without blocking apply_system, which is the repair
 			# path that recreates the PBR table and validates it afterwards.
 			printf 'failclosed_route=warn:missing\n'
+		fi
+		if failclosed_ipv6_check; then
+			printf 'failclosed_ipv6_route=ok\n'
+		else
+			printf 'failclosed_ipv6_route=warn:missing\n'
 		fi
 	fi
 
@@ -427,6 +533,20 @@ doctor() {
 	[ "$ok" -eq 1 ]
 }
 
+strongswan_security_check() {
+	case "$1" in
+		client)
+			pkg_version_at_least strongswan 6.0.3 ||
+				die 'Installed strongSwan is vulnerable to CVE-2025-62291; upgrade strongSwan before enabling the outbound EAP client'
+			;;
+		# Inbound compatibility is advisory. The installed OpenWrt package may be
+		# older than the upstream fix, but operators can deliberately keep the
+		# EAP server enabled; doctor reports the version without changing runtime.
+		server) return 0 ;;
+		*) die 'Expected strongSwan security mode: client or server' ;;
+	esac
+}
+
 runtime_packages() {
 	cat <<'EOF'
 pbr
@@ -496,12 +616,21 @@ runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-/usr/libexec/ikev2-manager.d}"
 . "$runtime_lib_dir/routing.sh"
 
 deps_status() {
+	status_tmp="${deps_status_file}.new.$$"
 	{
 		[ -z "${DEPS_ACTION_ID:-}" ] || printf 'action_id=%s\n' "$DEPS_ACTION_ID"
 		printf 'state=%s\n' "$1"
 		printf 'updated=%s\n' "$(date '+%Y-%m-%d %H:%M:%S %z')"
 		[ -z "${2:-}" ] || printf 'message=%s\n' "$2"
-	} > "$deps_status_file"
+	} >"$status_tmp"
+	mv "$status_tmp" "$deps_status_file"
+}
+
+rollback_dependency_install() {
+	cleanup_dnsmasq_transaction
+	deps_state_captured || return 1
+	deps_state_restore || return 1
+	deps_state_clear
 }
 
 # Heavy installer body. Runs detached (see install_deps) and reports progress
@@ -530,10 +659,31 @@ run_install_deps() {
 		deps_status error 'Compatibility preflight failed; run ikev2-manager-system preflight'
 		exit 1
 	fi
+	if [ -e "$deps_state_dir" ] && [ "$(deps_state_version)" = 2 ]; then
+		# Version 2 compared every future package against the original baseline and
+		# could claim packages installed later by an administrator. Discard it and
+		# establish a conservative version-3 baseline instead of deleting anything.
+		deps_status running 'Resetting an unsafe legacy dependency ownership record...'
+		deps_state_clear
+	elif [ -e "$deps_state_dir" ] && ! deps_state_ready; then
+		deps_status running 'Recovering an interrupted dependency installation...'
+		if ! rollback_dependency_install; then
+			deps_status error 'An interrupted installation could not be rolled back; see /tmp/ikev2-manager-deps.log'
+			exit 1
+		fi
+	fi
+	if deps_state_ready && [ "$(deps_state_version)" = 1 ] &&
+	   ! deps_state_upgrade_v1; then
+		deps_status error 'Legacy dependency ownership could not be upgraded safely'
+		exit 1
+	fi
 
 	deps_status running 'Creating a recovery backup...'
 	backup="/tmp/ikev2-manager-deps-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
-	sysupgrade -b "$backup"
+	if ! sysupgrade -b "$backup"; then
+		deps_status error 'Unable to create the pre-install sysupgrade backup'
+		exit 1
+	fi
 
 	deps_status running 'Updating package lists...'
 	if ! pkg_update; then
@@ -545,18 +695,56 @@ run_install_deps() {
 	if ! verify_install_plan; then
 		exit 1
 	fi
-	if ! deps_state_capture; then
-		deps_status error 'Unable to save the pre-install package and DNS state'
-		exit 1
+	packages="$(runtime_packages | tr '\n' ' ')"
+	if deps_state_ready; then
+		if ! pkg_installed dnsmasq-full || ! pkg_dnsmasq_has_nftset; then
+			deps_status error 'Installed dependency state is inconsistent with dnsmasq; use Remove Dependencies before reinstalling'
+			exit 1
+		fi
+		missing=''
+		for package in $packages; do
+			pkg_installed "$package" || missing="${missing}${missing:+ }$package"
+		done
+		if [ -n "$missing" ]; then
+			deps_status running 'Repairing missing runtime packages...'
+			repair_snapshot="/tmp/ikev2-manager-repair-before.$$"
+			if ! pkg_list_installed_names >"$repair_snapshot"; then
+				deps_status error 'Unable to snapshot installed packages before dependency repair'
+				exit 1
+			fi
+			if ! pkg_install $missing; then
+				pkg_remove_added_since "$repair_snapshot" >/dev/null 2>&1 || true
+				rm -f "$repair_snapshot"
+				deps_status error 'Dependency repair failed; the previous runtime packages were kept'
+				exit 1
+			fi
+		fi
+		if ! doctor >/tmp/ikev2-manager-doctor.last 2>&1 ||
+		   ! grep -q '^doctor_ok=1' /tmp/ikev2-manager-doctor.last; then
+			[ -z "$missing" ] || pkg_remove_added_since "$repair_snapshot" >/dev/null 2>&1 || true
+			[ -z "${repair_snapshot:-}" ] || rm -f "$repair_snapshot"
+			deps_status error 'Dependency repair failed runtime checks; the previous runtime packages were kept'
+			exit 1
+		fi
+		if [ -n "$missing" ] && ! deps_state_record_added_since "$repair_snapshot"; then
+			pkg_remove_added_since "$repair_snapshot" >/dev/null 2>&1 || true
+			rm -f "$repair_snapshot"
+			deps_status error 'Repaired package ownership could not be saved; newly added packages were removed'
+			exit 1
+		fi
+		[ -z "${repair_snapshot:-}" ] || rm -f "$repair_snapshot"
+		deps_status ok 'All runtime dependencies are installed and verified.'
+		return 0
 	fi
 
+	cache="/tmp/ikev2-manager-dns-packages"
+	dnsmasq_provider=''
 	if ! pkg_installed dnsmasq-full; then
 		dnsmasq_provider="$(pkg_dnsmasq_provider || true)"
 		if [ -z "$dnsmasq_provider" ]; then
 			deps_status error 'No supported dnsmasq provider is installed; dependency installation stopped'
 			exit 1
 		fi
-		cache="/tmp/ikev2-manager-dns-packages"
 		rm -rf "$cache"
 		mkdir -p "$cache"
 		if [ "$package_manager" = opkg ]; then
@@ -574,54 +762,118 @@ run_install_deps() {
 				exit 1
 			fi
 		fi
+	fi
 
-		deps_status running 'Replacing dnsmasq with dnsmasq-full...'
-		cp /etc/config/dhcp /tmp/ikev2-manager-dhcp.before-deps
-		if ! pkg_switch_dnsmasq_full "$cache" "$dnsmasq_provider"; then
-			pkg_restore_dnsmasq "$cache" "$dnsmasq_provider" || true
-			cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
-			rm -f /etc/config/dhcp.apk-new /etc/config/dhcp-opkg
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
-			deps_status error 'dnsmasq-full installation failed; previous dnsmasq provider restored'
+	if ! deps_state_capture; then
+		deps_status error 'Unable to save the pre-install package and DNS state'
+		cleanup_dnsmasq_transaction
+		exit 1
+	fi
+	if [ "$package_manager" = opkg ] && [ -n "$dnsmasq_provider" ]; then
+		previous_pkg="$(pkg_package_file "$cache" "$dnsmasq_provider")"
+		if ! deps_state_store_dnsmasq_package "$previous_pkg"; then
+			deps_state_clear
+			deps_status error 'Unable to preserve the original dnsmasq package for rollback'
 			cleanup_dnsmasq_transaction
 			exit 1
 		fi
-		cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
+	fi
+
+	if [ -n "$dnsmasq_provider" ]; then
+		deps_status running 'Replacing dnsmasq with dnsmasq-full...'
+		dns_snapshot="/tmp/ikev2-manager-dns-before.$$"
+		if ! pkg_list_installed_names >"$dns_snapshot"; then
+			deps_status error 'Unable to snapshot packages before replacing dnsmasq'
+			rollback_dependency_install || true
+			exit 1
+		fi
+		if ! pkg_switch_dnsmasq_full "$cache" "$dnsmasq_provider"; then
+			deps_state_record_added_since "$dns_snapshot" || true
+			rm -f "$dns_snapshot"
+			if rollback_dependency_install; then
+				deps_status error 'dnsmasq-full installation failed; previous dnsmasq provider restored'
+			else
+				deps_status error 'dnsmasq-full installation failed and rollback failed; see /tmp/ikev2-manager-deps.log'
+			fi
+			exit 1
+		fi
+		if ! deps_state_record_added_since "$dns_snapshot"; then
+			rm -f "$dns_snapshot"
+			rollback_dependency_install || true
+			deps_status error 'dnsmasq-full was installed but package ownership could not be saved; previous state restored'
+			exit 1
+		fi
+		rm -f "$dns_snapshot"
+		if ! cp "$(deps_state_file dhcp.before)" /etc/config/dhcp; then
+			if rollback_dependency_install; then
+				deps_status error 'Unable to restore DHCP configuration after dnsmasq replacement; previous state restored'
+			else
+				deps_status error 'DHCP configuration restore and automatic rollback failed; see /tmp/ikev2-manager-deps.log'
+			fi
+			exit 1
+		fi
 		rm -f /etc/config/dhcp.apk-new /etc/config/dhcp-opkg
 		if ! pkg_installed dnsmasq-full || ! pkg_dnsmasq_has_nftset; then
-			pkg_restore_dnsmasq "$cache" "$dnsmasq_provider" || true
-			cp /tmp/ikev2-manager-dhcp.before-deps /etc/config/dhcp
-			rm -f /etc/config/dhcp.apk-new /etc/config/dhcp-opkg
-			/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
-			deps_status error 'dnsmasq-full verification failed; previous dnsmasq provider restored'
-			cleanup_dnsmasq_transaction
+			if rollback_dependency_install; then
+				deps_status error 'dnsmasq-full verification failed; previous dnsmasq provider restored'
+			else
+				deps_status error 'dnsmasq-full verification failed and rollback failed; see /tmp/ikev2-manager-deps.log'
+			fi
 			exit 1
 		fi
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+		if ! /etc/init.d/dnsmasq restart >/dev/null 2>&1; then
+			rollback_dependency_install || true
+			deps_status error 'dnsmasq-full was installed but DNS service did not restart; previous state restored'
+			exit 1
+		fi
 		cleanup_dnsmasq_transaction
 	fi
 
 	deps_status running 'Installing strongSwan, PBR, sing-box and XFRM packages...'
-	packages="$(runtime_packages | tr '\n' ' ')"
+	runtime_snapshot="/tmp/ikev2-manager-runtime-before.$$"
+	if ! pkg_list_installed_names >"$runtime_snapshot"; then
+		rollback_dependency_install || true
+		deps_status error 'Unable to snapshot packages before runtime installation'
+		exit 1
+	fi
 	if ! pkg_install $packages; then
-		if deps_state_restore; then
-			deps_state_clear
+		deps_state_record_added_since "$runtime_snapshot" || true
+		rm -f "$runtime_snapshot"
+		if rollback_dependency_install; then
 			deps_status error 'Package installation failed; the pre-install package and DNS state was restored'
 		else
 			deps_status error 'Package installation failed; automatic rollback also failed; see /tmp/ikev2-manager-deps.log'
 		fi
 		exit 1
 	fi
-	if ! deps_state_mark_installed; then
-		deps_status error 'Dependencies were installed but their ownership record could not be saved'
+	if ! deps_state_record_added_since "$runtime_snapshot"; then
+		rm -f "$runtime_snapshot"
+		if rollback_dependency_install; then
+			deps_status error 'Installed package ownership could not be saved; the pre-install state was restored'
+		else
+			deps_status error 'Installed package ownership could not be saved and rollback failed; see /tmp/ikev2-manager-deps.log'
+		fi
 		exit 1
 	fi
-
-	if doctor >/tmp/ikev2-manager-doctor.last 2>&1 && grep -q '^doctor_ok=1' /tmp/ikev2-manager-doctor.last; then
-		deps_status ok 'All runtime dependencies installed.'
-	else
-		deps_status ok 'Packages installed, but some checks still report missing.'
+	rm -f "$runtime_snapshot"
+	if ! doctor >/tmp/ikev2-manager-doctor.last 2>&1 ||
+	   ! grep -q '^doctor_ok=1' /tmp/ikev2-manager-doctor.last; then
+		if rollback_dependency_install; then
+			deps_status error 'Installed packages failed runtime checks; the pre-install state was restored'
+		else
+			deps_status error 'Installed packages failed runtime checks and rollback failed; see /tmp/ikev2-manager-deps.log'
+		fi
+		exit 1
 	fi
+	if ! deps_state_mark_installed; then
+		if rollback_dependency_install; then
+			deps_status error 'Dependency ownership could not be saved; the pre-install state was restored'
+		else
+			deps_status error 'Dependency ownership could not be saved and rollback failed; see /tmp/ikev2-manager-deps.log'
+		fi
+		exit 1
+	fi
+	deps_status ok 'All runtime dependencies installed.'
 }
 
 install_deps() {
@@ -653,13 +905,21 @@ run_remove_deps() {
 		deps_status error 'Dependency ownership is unavailable; install dependencies once with this version before using Remove'
 		return 1
 	fi
+	if [ "$(defaultv dns managed 0)" = 1 ] ||
+	   { [ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ]; }; then
+		deps_status running 'Restoring the DNS configuration used before this application...'
+		if ! "$0" _dns-apply-inner 0 '' '' '' '' '' ''; then
+			deps_status error 'Original DNS could not be restored; dependency removal stopped before removing packages'
+			return 1
+		fi
+	fi
 	deps_status running 'Disabling managed configuration...'
-	uci -q set "$config.globals.configured=0" || true
-	uci -q commit "$config" || true
-	remove_managed || true
+	if ! disable_managed; then
+		deps_status error 'Managed routing could not be disabled; dependency removal stopped before removing packages'
+		return 1
+	fi
 	swanctl --terminate --ike proxy-out --timeout 3 >/dev/null 2>&1 || true
 	swanctl --terminate --ike ikev2-in --timeout 3 >/dev/null 2>&1 || true
-	/etc/init.d/pbr stop >/dev/null 2>&1 || true
 	if [ -x /usr/libexec/ikev2-domain-router ]; then
 		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || true
 	fi
@@ -701,11 +961,13 @@ sync_network() {
 sync_firewall() {
 	wan_zone="$(getv globals wan_zone)"
 	server_enabled="$(getv server enabled)"
+	[ "$server_enabled" = 1 ] || server_enabled=0
 	inbound_zone="$(defaultv server firewall_zone ikev2in)"
 	outbound_zone="$(defaultv server outbound_zone ikev2out)"
 	dns_enforce="$(getv globals dns_enforce)"
 	block_dot="$(getv globals block_dot)"
 	source_zones="$(get_list globals source_zone)"
+	validate_server_zone_names "$inbound_zone" "$outbound_zone"
 
 	delete_prefixed_sections firewall ikev2pbr_
 
@@ -796,6 +1058,7 @@ sync_firewall() {
 
 sync_inbound_access() {
 	server_enabled="$(getv server enabled)"
+	[ "$server_enabled" = 1 ] || server_enabled=0
 	inbound_zone="$(defaultv server firewall_zone ikev2in)"
 	outbound_zone="$(defaultv server outbound_zone ikev2out)"
 	wan_zone="$(getv globals wan_zone)"
@@ -867,6 +1130,27 @@ sync_pbr() {
 		[ "$(defaultv globals source_include_vpn 1)" = 1 ]; then
 		src="${src:+$src }@ipsec-in"
 	fi
+	device_sources="$(get_list domains device_source)"
+	if [ -z "$device_sources" ]; then
+		for device_source in $(uci -q get pbr.ikev2pbr_domains.src_addr 2>/dev/null || true); do
+			case "$device_source" in @*) continue ;; esac
+			valid_device_source "$device_source" || continue
+			device_sources="${device_sources:+$device_sources }$device_source"
+		done
+		if [ -n "$device_sources" ]; then
+			set_list domains device_source "$device_sources" ||
+			die 'Unable to preserve device routing sources'
+			uci commit "$config" || die 'Unable to save device routing sources'
+		fi
+	fi
+	for device_source in $device_sources; do
+		valid_device_source "$device_source" ||
+			die "Invalid saved device source '$device_source'"
+		case " $src " in
+			*" $device_source "*) ;;
+			*) src="${src:+$src }$device_source" ;;
+		esac
+	done
 
 	# Snapshot the user's original pbr.config once, so disabling managed mode can
 	# restore it. Enabling PBR globally and not reverting it broke routers where
@@ -880,7 +1164,10 @@ sync_pbr() {
 		uci commit "$config"
 	fi
 	uci set pbr.config.enabled='1'
-	uci set pbr.config.ipv6_enabled='0'
+	# The IKEv2 tunnel is IPv4-only. Enabling IPv6 processing makes PBR create
+	# an unreachable IPv6 route for this interface, so selected AAAA destinations
+	# fail closed and clients fall back to IPv4 through the tunnel.
+	uci set pbr.config.ipv6_enabled='1'
 	uci set pbr.config.resolver_set='dnsmasq.nftset'
 	uci set pbr.config.strict_enforcement='1'
 	add_list_unique pbr config supported_interface ikev2out
@@ -932,8 +1219,6 @@ sync_pbr() {
 }
 
 dns_original_dir='/etc/ikev2-manager/dns-original'
-dns_input_file='/tmp/ikev2-manager-dns.in'
-
 ensure_dns_section() {
 	uci -q get "$config.dns" >/dev/null 2>&1 && return 0
 	uci set "$config.dns=dns"
@@ -961,21 +1246,81 @@ dns_protocol_for_upstream() {
 	esac
 }
 
+valid_dns_ipv4() {
+	printf '%s\n' "$1" | awk -F. '
+		NF != 4 { exit 1 }
+		{
+			for (i = 1; i <= 4; i++)
+				if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255)
+					exit 1
+		}
+	'
+}
+
+valid_dns_hostname() {
+	awk -v value="$1" 'BEGIN {
+		if (value == "" || length(value) > 253 || value !~ /^[A-Za-z0-9.-]+$/ ||
+		    value ~ /^[0-9.]+$/)
+			exit 1
+		count = split(value, labels, ".")
+		for (i = 1; i <= count; i++) {
+			label = labels[i]
+			if (label == "" || length(label) > 63 ||
+			    label !~ /^[A-Za-z0-9]/ || label !~ /[A-Za-z0-9]$/ ||
+			    label !~ /^[A-Za-z0-9-]+$/)
+				exit 1
+		}
+	}'
+}
+
+valid_dns_authority() {
+	authority="$1"
+	case "$authority" in
+		'' | *'/'* | *'?'* | *'#'* | *'@'* | *'['* | *']'*) return 1 ;;
+	esac
+	case "$authority" in
+		*:*)
+			host="${authority%:*}"
+			port="${authority##*:}"
+			[ "$host" = "${host%:*}" ] || return 1
+			printf '%s' "$port" | grep -Eq '^[0-9]+$' || return 1
+			[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
+			;;
+		*) host="$authority" ;;
+	esac
+	valid_dns_ipv4 "$host" || valid_dns_hostname "$host"
+}
+
 valid_dns_endpoint() {
 	protocol="$1"
 	endpoint="$2"
-	printf '%s' "$endpoint" |
-		grep -Eq '^[A-Za-z0-9._~:/?@%+=,&;-]+$' || return 1
-	case "$protocol:$endpoint" in
-		udp:udp://*) ;;
-		tcp:tcp://*) ;;
-		dot:tls://*) ;;
-		doh:https://*) ;;
-		doh3:https://*) ;;
-		h3:h3://*) ;;
-		doq:quic://*) ;;
-		dnscrypt:sdns://*) ;;
+	[ -n "$endpoint" ] && [ "${#endpoint}" -le 2048 ] || return 1
+	case "$protocol" in
+		udp) prefix='udp://' ;;
+		tcp) prefix='tcp://' ;;
+		dot) prefix='tls://' ;;
+		doh | doh3) prefix='https://' ;;
+		h3) prefix='h3://' ;;
+		doq) prefix='quic://' ;;
+		dnscrypt)
+			case "$endpoint" in sdns://*) stamp="${endpoint#sdns://}" ;; *) return 1 ;; esac
+			[ "${#stamp}" -ge 8 ] &&
+				printf '%s' "$stamp" | grep -Eq '^[A-Za-z0-9_-]+$'
+			return
+			;;
 		*) return 1 ;;
+	esac
+	case "$endpoint" in "$prefix"*) remainder="${endpoint#"$prefix"}" ;; *) return 1 ;; esac
+	case "$protocol" in
+		doh | doh3 | h3)
+			case "$remainder" in */*) authority="${remainder%%/*}"; path="/${remainder#*/}" ;; *) return 1 ;; esac
+			valid_dns_authority "$authority" || return 1
+			[ "$path" != / ] &&
+				printf '%s' "$path" | grep -Eq '^/[A-Za-z0-9._~:/?%+=,&;@-]+$'
+			;;
+		*)
+			valid_dns_authority "$remainder"
+			;;
 	esac
 }
 
@@ -1046,64 +1391,116 @@ dns_service_state() {
 }
 
 save_dns_state() {
-	dir="$1"
-	mkdir -p "$dir"
-	uci export dnsproxy >"$dir/dnsproxy.uci" 2>/dev/null || :
-	uci export dhcp >"$dir/dhcp.uci" 2>/dev/null || :
-	dns_service_state >"$dir/service.state"
+	local dir="$1" tmp package source
+	tmp="${dir}.new.$$"
+	rm -rf "$tmp"
+	mkdir -p "${dir%/*}" "$tmp" || return 1
+	for package in dnsproxy dhcp; do
+		source="$uci_config_dir/$package"
+		if [ -f "$source" ]; then
+			cp "$source" "$tmp/$package.config" || { rm -rf "$tmp"; return 1; }
+		else
+			: >"$tmp/$package.absent"
+		fi
+	done
+	dns_service_state >"$tmp/service.state" || { rm -rf "$tmp"; return 1; }
+	rm -rf "$dir"
+	mv "$tmp" "$dir"
 }
 
 restore_dns_state() {
-	dir="$1"
-	restart_dnsmasq="${2:-1}"
+	local dir="$1" restart_dnsmasq="${2:-1}" package destination enabled running
 	[ -d "$dir" ] || return 0
 	for package in dnsproxy dhcp; do
-		[ -s "$dir/$package.uci" ] || continue
-		uci import "$package" <"$dir/$package.uci"
-		uci commit "$package"
+		destination="$uci_config_dir/$package"
+		uci -q revert "$package" >/dev/null 2>&1 || true
+		if [ -f "$dir/$package.config" ]; then
+			cp "$dir/$package.config" "${destination}.restore.$$" || return 1
+			mv "${destination}.restore.$$" "$destination" || return 1
+		elif [ -f "$dir/$package.absent" ]; then
+			rm -f "$destination"
+		elif [ -s "$dir/$package.uci" ]; then
+			uci import "$package" <"$dir/$package.uci" || return 1
+			uci commit "$package" || return 1
+		else
+			return 1
+		fi
 	done
 	enabled="$(sed -n 's/^enabled=//p' "$dir/service.state" 2>/dev/null | tail -1)"
 	running="$(sed -n 's/^running=//p' "$dir/service.state" 2>/dev/null | tail -1)"
 	if [ "$enabled" = 1 ]; then
-		/etc/init.d/dnsproxy enable >/dev/null 2>&1 || true
+		/etc/init.d/dnsproxy enable >/dev/null 2>&1 || return 1
 	else
-		/etc/init.d/dnsproxy disable >/dev/null 2>&1 || true
+		/etc/init.d/dnsproxy disable >/dev/null 2>&1 || return 1
 	fi
 	if [ "$running" = 1 ]; then
-		/etc/init.d/dnsproxy restart >/dev/null 2>&1 || true
+		/etc/init.d/dnsproxy restart >/dev/null 2>&1 || return 1
 	else
-		/etc/init.d/dnsproxy stop >/dev/null 2>&1 || true
+		/etc/init.d/dnsproxy stop >/dev/null 2>&1 || return 1
 	fi
 	if [ "$restart_dnsmasq" = 1 ]; then
-		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || return 1
 	fi
 }
 
 ensure_dns_original() {
-	[ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ] && return 0
+	if [ "$(defaultv dns saved 0)" = 1 ] &&
+	   [ -s "$dns_original_dir/service.state" ] &&
+	   { [ -f "$dns_original_dir/dhcp.config" ] || [ -f "$dns_original_dir/dhcp.absent" ]; } &&
+	   { [ -f "$dns_original_dir/dnsproxy.config" ] || [ -f "$dns_original_dir/dnsproxy.absent" ]; }; then
+		return 0
+	fi
 	rm -rf "$dns_original_dir"
-	save_dns_state "$dns_original_dir"
+	save_dns_state "$dns_original_dir" || return 1
 	uci set "$config.dns.saved=1"
 	uci commit "$config"
 }
 
+rollback_dns_transaction() {
+	trap - EXIT INT TERM HUP
+	[ "${dns_rollback_active:-0}" = 1 ] || return 0
+	dns_rollback_active=0
+	rollback_ok=1
+	restore_dns_state "$rollback" || rollback_ok=0
+	uci -q revert "$config" >/dev/null 2>&1 || true
+	if [ -s "$rollback/$config.uci" ]; then
+		uci import "$config" <"$rollback/$config.uci" &&
+			uci commit "$config" || rollback_ok=0
+	else
+		rollback_ok=0
+	fi
+	if [ "${fakeip_active:-0}" = 1 ] && [ -x /usr/libexec/ikev2-domain-router ]; then
+		/usr/libexec/ikev2-domain-router refresh >/dev/null 2>&1 || rollback_ok=0
+	fi
+	rm -rf "$rollback"
+	[ "$rollback_ok" -eq 1 ]
+}
+
+abort_dns_transaction() {
+	if rollback_dns_transaction; then
+		printf '%s\n' 'DNS apply aborted; previous resolver configuration was restored' >&2
+	else
+		printf '%s\n' 'DNS apply aborted and automatic resolver rollback was incomplete' >&2
+	fi
+}
+
 dns_query_ok() {
-	tries=0
+	local tries=0 test_file="/tmp/ikev2-manager-dns-test.$$"
 	while [ "$tries" -lt 8 ]; do
-		if nslookup openwrt.org 127.0.0.1 >/tmp/ikev2-manager-dns-test 2>&1 &&
+		if nslookup openwrt.org 127.0.0.1 >"$test_file" 2>&1 &&
 			awk '
 				/^Name:/ { answer = 1; next }
 				answer && /^Address:/ { found = 1 }
 				END { exit found ? 0 : 1 }
-			' /tmp/ikev2-manager-dns-test; then
-			rm -f /tmp/ikev2-manager-dns-test
+				' "$test_file"; then
+			rm -f "$test_file"
 			return 0
 		fi
 		tries=$((tries + 1))
 		sleep 1
 	done
-	cat /tmp/ikev2-manager-dns-test >&2 2>/dev/null || true
-	rm -f /tmp/ikev2-manager-dns-test
+	cat "$test_file" >&2 2>/dev/null || true
+	rm -f "$test_file"
 	return 1
 }
 
@@ -1156,7 +1553,7 @@ dns_apply() {
 	bootstrap="$(normalize_list "$6")"
 	fallback="$(normalize_list "$7")"
 	[ "$managed" = 0 ] || [ "$managed" = 1 ] || die 'Invalid DNS management mode'
-	valid_name "$provider" || die 'Invalid DNS provider'
+	[ "$managed" = 0 ] || valid_name "$provider" || die 'Invalid DNS provider'
 	fakeip_active=0
 	if [ "$(getv domains engine)" = fakeip ] &&
 	   [ -x /usr/libexec/ikev2-domain-router ]; then
@@ -1165,15 +1562,34 @@ dns_apply() {
 
 	if [ "$managed" = 0 ]; then
 		if [ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ]; then
-			restore_dns_state "$dns_original_dir" "$([ "$fakeip_active" = 1 ] && echo 0 || echo 1)"
-			if [ "$fakeip_active" = 1 ]; then
-				/usr/libexec/ikev2-domain-router adopt-upstream ||
-					die 'Original DNS was restored, but FakeIP could not adopt its upstream'
+			rollback="/tmp/ikev2-manager-dns-disable-rollback-$$"
+			rm -rf "$rollback"
+			save_dns_state "$rollback" || die 'Unable to snapshot the current DNS configuration'
+			uci export "$config" >"$rollback/$config.uci" || {
+				rm -rf "$rollback"
+				die 'Unable to snapshot application DNS settings'
+			}
+			dns_rollback_active=1
+			trap abort_dns_transaction EXIT INT TERM HUP
+			if ! restore_dns_state "$dns_original_dir" "$([ "$fakeip_active" = 1 ] && echo 0 || echo 1)" ||
+			   { [ "$fakeip_active" = 1 ] && ! /usr/libexec/ikev2-domain-router adopt-upstream; } ||
+			   ! dns_query_ok; then
+				if rollback_dns_transaction; then
+					die 'Original DNS could not be restored safely; managed DNS remains configured'
+				fi
+				die 'Original DNS restore failed and automatic rollback was incomplete'
 			fi
 		fi
 		uci set "$config.dns.managed=0"
+		uci set "$config.dns.saved=0"
 		uci commit "$config"
 		dns_query_ok || die 'Restored DNS configuration is not resolving'
+		if [ "${dns_rollback_active:-0}" = 1 ]; then
+			dns_rollback_active=0
+			trap - EXIT INT TERM HUP
+			rm -rf "$rollback"
+		fi
+		rm -rf "$dns_original_dir"
 		return 0
 	fi
 
@@ -1195,11 +1611,16 @@ dns_apply() {
 	fi
 	command -v dnsproxy >/dev/null 2>&1 || die 'dnsproxy is not installed'
 
-	ensure_dns_original
+	ensure_dns_original || die 'Unable to save the original DNS configuration'
 	rollback="/tmp/ikev2-manager-dns-rollback-$$"
 	rm -rf "$rollback"
-	save_dns_state "$rollback"
-	uci export "$config" >"$rollback/$config.uci"
+	save_dns_state "$rollback" || die 'Unable to snapshot the current DNS configuration'
+	uci export "$config" >"$rollback/$config.uci" || {
+		rm -rf "$rollback"
+		die 'Unable to snapshot application DNS settings'
+	}
+	dns_rollback_active=1
+	trap abort_dns_transaction EXIT INT TERM HUP
 
 	uci -q get dnsproxy.global >/dev/null 2>&1 ||
 		uci set dnsproxy.global=dnsproxy
@@ -1241,27 +1662,40 @@ dns_apply() {
 	uci set "$config.dns.fallback=$fallback"
 	uci commit "$config"
 
-	/etc/init.d/dnsproxy enable >/dev/null 2>&1 || true
-	if ! /etc/init.d/dnsproxy restart >/dev/null 2>&1 ||
+	if ! /etc/init.d/dnsproxy enable >/dev/null 2>&1 ||
+	   ! /etc/init.d/dnsproxy restart >/dev/null 2>&1 ||
 		{ [ "$fakeip_active" = 1 ] &&
 			! /usr/libexec/ikev2-domain-router refresh; } ||
 		{ [ "$fakeip_active" != 1 ] &&
 			! /etc/init.d/dnsmasq restart >/dev/null 2>&1; } ||
 		! dns_query_ok; then
-		restore_dns_state "$rollback"
-		uci import "$config" <"$rollback/$config.uci"
-		uci commit "$config"
-		if [ "$fakeip_active" = 1 ]; then
-			/usr/libexec/ikev2-domain-router refresh >/dev/null 2>&1 || true
+		if rollback_dns_transaction; then
+			die 'DNS validation failed; previous resolver configuration was restored'
 		fi
-		rm -rf "$rollback"
-		die 'DNS validation failed; previous resolver configuration was restored'
+		die 'DNS validation failed and automatic resolver rollback was incomplete'
 	fi
+	dns_rollback_active=0
+	trap - EXIT INT TERM HUP
 	rm -rf "$rollback"
 }
 
 dns_set_async() {
-	[ -s "$dns_input_file" ] || die 'DNS settings input is missing'
+	[ -f "$dns_input_file" ] || die 'DNS settings input is missing'
+	[ ! -L "$dns_input_file" ] || {
+		rm -f "$dns_input_file"
+		die 'DNS settings input must not be a symbolic link'
+	}
+	input_bytes="$(wc -c <"$dns_input_file" | tr -d ' ')"
+	case "$input_bytes" in '' | *[!0-9]*) rm -f "$dns_input_file"; die 'Invalid DNS input size' ;; esac
+	[ "$input_bytes" -le 16384 ] || {
+		rm -f "$dns_input_file"
+		die 'DNS settings input is too large'
+	}
+	chmod 600 "$dns_input_file" || die 'Unable to protect DNS settings input'
+	[ -z "$(sed -n '8p' "$dns_input_file")" ] || {
+		rm -f "$dns_input_file"
+		die 'DNS settings input has unexpected extra fields'
+	}
 	{
 		IFS= read -r managed
 		IFS= read -r protocol
@@ -1279,76 +1713,86 @@ dns_set_async() {
 backup_uci_state() {
 	label="$1"
 	stamp="$(date +%Y%m%d-%H%M%S)"
-	dir="/etc/ikev2-manager/backups/${stamp}-${label}"
-	mkdir -p "$dir"
-	for package in ikev2-manager firewall pbr network; do
-		uci export "$package" >"$dir/$package.uci" 2>/dev/null || :
+	dir="/etc/ikev2-manager/backups/${stamp}-$$-${label}"
+	tmp="${dir}.new"
+	rm -rf "$tmp"
+	mkdir -p "$tmp" || return 1
+	for package in ikev2-manager firewall pbr network dhcp dnsproxy; do
+		if [ -f "$uci_config_dir/$package" ]; then
+			cp -p "$uci_config_dir/$package" "$tmp/$package.config" || {
+				rm -rf "$tmp"
+				return 1
+			}
+		else
+			: >"$tmp/$package.absent"
+		fi
 	done
+	for service in ikev2-xfrm dnsproxy dnsmasq ikev2-domain-router pbr ikev2-health; do
+		[ -x "/etc/init.d/$service" ] || continue
+		if "/etc/init.d/$service" enabled >/dev/null 2>&1; then
+			enabled=1
+		else
+			enabled=0
+		fi
+		if "/etc/init.d/$service" running >/dev/null 2>&1; then
+			running=1
+		else
+			running=0
+		fi
+		printf '%s\t%s\t%s\n' "$service" "$enabled" "$running"
+	done >"$tmp/services.state"
+	mv "$tmp" "$dir" || return 1
 	printf '%s\n' "$dir"
 }
 
 restore_uci_state() {
 	dir="$1"
-	for package in ikev2-manager firewall pbr network; do
-		[ -s "$dir/$package.uci" ] || continue
-		uci import "$package" <"$dir/$package.uci"
+	restored=1
+	for package in ikev2-manager firewall pbr network dhcp dnsproxy; do
+		destination="$uci_config_dir/$package"
+		uci -q revert "$package" >/dev/null 2>&1 || true
+		if [ -f "$dir/$package.config" ]; then
+			cp -p "$dir/$package.config" "${destination}.restore.$$" &&
+				mv "${destination}.restore.$$" "$destination" || restored=0
+		elif [ -f "$dir/$package.absent" ]; then
+			rm -f "$destination" || restored=0
+		else
+			restored=0
+		fi
 	done
-	for package in ikev2-manager firewall pbr network; do
-		uci commit "$package" 2>/dev/null || true
-	done
-	fw4 -q reload >/dev/null 2>&1 || true
-	if [ "$(uci -q get pbr.config.enabled 2>/dev/null || echo 0)" = 1 ]; then
-		/etc/init.d/pbr restart >/dev/null 2>&1 || true
-	else
-		/etc/init.d/pbr stop >/dev/null 2>&1 || true
-	fi
-	/usr/share/pbr/pbr.user.ikev2out >/dev/null 2>&1 || true
-}
-
-remove_legacy_sections() {
-	delete_sections firewall \
-		vpnout lan_to_vpnout iot_to_vpnout \
-		vpnin vpnin_dns vpnin_icmp \
-		dns_hijack_lan4 dns_hijack_iot4 dns_hijack_vpnin4 block_dot \
-		ikev2_udp ikev2_esp
-	delete_sections pbr ikev2_test ikev2out_include
-	uci commit firewall
-	uci commit pbr
-}
-
-adopt_legacy() {
-	backup_dir="$(backup_uci_state adopt-legacy)"
-	trap 'restore_uci_state "$backup_dir"; die "Legacy adoption failed; restored $backup_dir"' INT TERM HUP
-
-	uci set "$config.globals.configured=1"
-	uci commit "$config"
-	remove_legacy_sections
-
-	if ! ( apply_system ); then
-		restore_uci_state "$backup_dir"
-		die "Legacy adoption failed; restored $backup_dir"
-	fi
-
-	if ! fw4 -q check; then
-		restore_uci_state "$backup_dir"
-		die "Firewall check failed; restored $backup_dir"
-	fi
-
-	/usr/libexec/ikev2-sync-vips >/dev/null 2>&1 || true
-	/usr/share/pbr/pbr.user.ikev2out >/dev/null 2>&1 || true
-	trap - INT TERM HUP
-	printf 'adopted=1\nbackup=%s\n' "$backup_dir"
+	fw4 -q check >/dev/null 2>&1 && fw4 -q reload >/dev/null 2>&1 || restored=0
+	while IFS="$(printf '\t')" read -r service enabled running; do
+		[ -n "$service" ] || continue
+		case "$service" in
+			pbr | ikev2-xfrm | ikev2-domain-router | dnsproxy | dnsmasq | ikev2-health) ;;
+			*) restored=0; continue ;;
+		esac
+		[ -x "/etc/init.d/$service" ] || { restored=0; continue; }
+		if [ "$enabled" = 1 ]; then
+			/etc/init.d/"$service" enable >/dev/null 2>&1 || restored=0
+		else
+			/etc/init.d/"$service" disable >/dev/null 2>&1 || restored=0
+		fi
+		if [ "$running" = 1 ]; then
+			/etc/init.d/"$service" restart >/dev/null 2>&1 || restored=0
+		else
+			/etc/init.d/"$service" stop >/dev/null 2>&1 || restored=0
+		fi
+	done <"$dir/services.state"
+	[ ! -x /usr/share/pbr/pbr.user.ikev2out ] ||
+		/usr/share/pbr/pbr.user.ikev2out >/dev/null 2>&1 || restored=0
+	[ "$restored" -eq 1 ]
 }
 
 remove_managed() {
 	if [ -x /usr/libexec/ikev2-domain-router ]; then
-		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || true
+		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || return 1
 	fi
 	delete_prefixed_sections firewall ikev2pbr_
 	delete_prefixed_sections firewall ikev2access_
-	uci commit firewall
+	uci commit firewall || return 1
 	uci -q delete network.ikev2out || true
-	uci commit network
+	uci commit network || return 1
 	uci -q delete pbr.ikev2pbr_domains || true
 	uci -q delete pbr.ikev2pbr_service_cidrs || true
 	uci -q delete pbr.ikev2pbr_include || true
@@ -1363,28 +1807,30 @@ remove_managed() {
 		for k in pbr_saved pbr_prev_enabled pbr_prev_ipv6 pbr_prev_resolver pbr_prev_strict; do
 			uci -q delete "$config.globals.$k"
 		done
-		uci commit "$config"
+		uci commit "$config" || return 1
 	fi
-	uci commit pbr
-	rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
+	uci commit pbr || return 1
 	rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
 	rm -f /var/run/ikev2-vip4
 	# Drop the IPv6 fail-fast route only if we added it (no real v6 default).
 	ip -6 route show default 2>/dev/null | grep -q 'unreachable' &&
 		ip -6 route del unreachable default metric 2147483647 2>/dev/null || true
-	/etc/init.d/ikev2-health stop >/dev/null 2>&1 || true
-	/etc/init.d/ikev2-xfrm stop >/dev/null 2>&1 || true
-	/etc/init.d/ikev2-health disable >/dev/null 2>&1 || true
-	/etc/init.d/ikev2-xfrm disable >/dev/null 2>&1 || true
-	fw4 -q reload >/dev/null 2>&1 || true
+	for service in ikev2-health ikev2-xfrm; do
+		[ -x "/etc/init.d/$service" ] || continue
+		/etc/init.d/"$service" stop >/dev/null 2>&1 || return 1
+		/etc/init.d/"$service" disable >/dev/null 2>&1 || return 1
+	done
+	fw4 -q check >/dev/null 2>&1 || return 1
+	fw4 -q reload >/dev/null 2>&1 || return 1
 	if [ "$(uci -q get pbr.config.enabled 2>/dev/null || echo 0)" = 1 ]; then
-		/etc/init.d/pbr restart >/dev/null 2>&1 || true
+		/etc/init.d/pbr restart >/dev/null 2>&1 || return 1
+		/etc/init.d/pbr running >/dev/null 2>&1 || return 1
 	else
-		/etc/init.d/pbr stop >/dev/null 2>&1 || true
+		/etc/init.d/pbr stop >/dev/null 2>&1 || return 1
 	fi
 }
 
-apply_system() {
+apply_system_inner() {
 	[ "$(getv globals configured)" = 1 ] ||
 		die 'Base setup is not enabled'
 	validate_runtime_config
@@ -1393,10 +1839,8 @@ apply_system() {
 	sync_network
 	sync_firewall
 	sync_pbr
-	# Remove the pre-r3 redundant nft drop rule. Fail-closed behavior now has
-	# two independent native layers: an unreachable PBR default and XFRM's
-	# policy drop when no matching SA exists.
-	rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
+	# Fail-closed behavior has two native layers: an unreachable PBR default and
+	# XFRM policy drop when no matching SA exists.
 	rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
 	/etc/init.d/ikev2-xfrm enable || die 'Failed to enable ikev2-xfrm'
 	/etc/init.d/ikev2-health enable || die 'Failed to enable ikev2-health'
@@ -1410,6 +1854,8 @@ apply_system() {
 		die 'fw4 forward chain has no zone forwarding after apply (LAN->WAN would be dropped); rolled back'
 	failclosed_check >/dev/null ||
 		die 'PBR fail-closed route validation failed'
+	failclosed_ipv6_check >/dev/null ||
+		die 'PBR IPv6 fail-closed route validation failed'
 	ensure_ipv6_failfast
 	/etc/init.d/ikev2-health start >/dev/null 2>&1 || true
 	if [ "$(getv domains engine)" = fakeip ] &&
@@ -1417,6 +1863,33 @@ apply_system() {
 		/usr/libexec/ikev2-domain-router refresh ||
 			die 'FakeIP domain router refresh failed'
 	fi
+}
+
+apply_system() {
+	backup_dir="$(backup_uci_state apply)" ||
+		die 'Unable to back up router state before apply'
+	if ! "$0" _apply-system-inner; then
+		if restore_uci_state "$backup_dir"; then
+			rm -rf "$backup_dir"
+			die 'Managed apply failed; previous router state was restored'
+		fi
+		rm -rf "$backup_dir"
+		die 'Managed apply failed and automatic rollback was incomplete'
+	fi
+	rm -rf "$backup_dir"
+}
+
+disable_managed() {
+	backup_dir="$(backup_uci_state disable)" || return 1
+	if ! "$0" _disable-managed-inner; then
+		restore_uci_state "$backup_dir" || {
+			rm -rf "$backup_dir"
+			return 1
+		}
+		rm -rf "$backup_dir"
+		return 1
+	fi
+	rm -rf "$backup_dir"
 }
 
 # Narrow runtime apply for Inbound Server saves. Most server edits only need a
@@ -1434,11 +1907,14 @@ apply_server_runtime() {
 	if [ "$needs_pbr" = 1 ]; then
 		sync_pbr
 	fi
+	/etc/init.d/ikev2-xfrm start || die 'Failed to update inbound XFRM interface'
 	fw4 -q check || die 'firewall4 validation failed'
 	if [ "$needs_pbr" = 1 ]; then
 		/etc/init.d/pbr restart || die 'PBR restart command failed'
 		/etc/init.d/pbr running >/dev/null 2>&1 ||
-			die 'PBR failed to start after server policy change'
+			 die 'PBR failed to start after server policy change'
+		failclosed_ipv6_check >/dev/null ||
+			die 'PBR IPv6 fail-closed route validation failed after server change'
 	fi
 	fw4 -q reload || die 'firewall4 reload failed'
 	ensure_forward_chain ||
@@ -1451,6 +1927,21 @@ apply_server_runtime() {
 		/usr/libexec/ikev2-domain-router refresh ||
 			die 'FakeIP domain router refresh failed'
 	fi
+}
+
+apply_server_runtime_transaction() {
+	needs_pbr="${1:-0}"
+	backup_dir="$(backup_uci_state server-runtime)" ||
+		die 'Unable to back up router state before server apply'
+	if ! "$0" _server-apply-inner "$needs_pbr"; then
+		if restore_uci_state "$backup_dir"; then
+			rm -rf "$backup_dir"
+			die 'Inbound server runtime apply failed; previous router state was restored'
+		fi
+		rm -rf "$backup_dir"
+		die 'Inbound server runtime apply failed and automatic rollback was incomplete'
+	fi
+	rm -rf "$backup_dir"
 }
 
 show_config() {
@@ -1475,11 +1966,33 @@ show_config() {
 		fi
 		printf 'domain_%s=%s\n' "$field" "$value"
 	done
-	case "$(ip -6 route show default 2>/dev/null | head -1)" in
-		*unreachable*) printf 'ipv6_failfast=active\n' ;;
-		'') printf 'ipv6_failfast=off\n' ;;
-		*) printf 'ipv6_failfast=na\n' ;;
-	esac
+	if failclosed_ipv6_check >/dev/null 2>&1; then
+		printf 'ipv6_failfast=active\n'
+	elif ip -6 route show default 2>/dev/null | grep -q .; then
+		printf 'ipv6_failfast=missing\n'
+	else
+		printf 'ipv6_failfast=off\n'
+	fi
+}
+
+persist_base_config() {
+	uci set "$config.globals.configured=$enabled" || return 1
+	uci set "$config.globals.wan_interface=$wan_interface" || return 1
+	uci set "$config.globals.wan_zone=$wan_zone" || return 1
+	set_list globals source_interface "$source_interfaces" || return 1
+	set_list globals source_zone "$source_zones" || return 1
+	uci set "$config.globals.dns_enforce=$dns_enforce" || return 1
+	uci set "$config.globals.block_dot=$block_dot" || return 1
+	uci set "$config.globals.source_include_vpn=$include_vpn" || return 1
+	uci commit "$config" || return 1
+	[ "$(getv globals configured)" = "$enabled" ] || return 1
+	[ "$(getv globals wan_interface)" = "$wan_interface" ] || return 1
+	[ "$(getv globals wan_zone)" = "$wan_zone" ] || return 1
+	[ "$(normalize_list "$(get_list globals source_interface)")" = "$source_interfaces" ] || return 1
+	[ "$(normalize_list "$(get_list globals source_zone)")" = "$source_zones" ] || return 1
+	[ "$(getv globals dns_enforce)" = "$dns_enforce" ] || return 1
+	[ "$(getv globals block_dot)" = "$block_dot" ] || return 1
+	[ "$(getv globals source_include_vpn)" = "$include_vpn" ]
 }
 
 set_config() {
@@ -1499,43 +2012,64 @@ set_config() {
 	[ "$dns_enforce" = 0 ] || [ "$dns_enforce" = 1 ] || die 'Invalid DNS enforcement value'
 	[ "$block_dot" = 0 ] || [ "$block_dot" = 1 ] || die 'Invalid DoT block value'
 	[ "$include_vpn" = 0 ] || [ "$include_vpn" = 1 ] || die 'Invalid VPN-server inclusion value'
+	source_interfaces="$(normalize_list "$source_interfaces")"
+	uci -q get "network.$wan_interface" >/dev/null 2>&1 ||
+		die "WAN network '$wan_interface' does not exist"
 
 	# Firewall zones are derived from the chosen networks (no separate UI fields).
 	wan_zone="$(zone_for_network "$wan_interface")"
+	zone_exists "$wan_zone" || die "WAN firewall zone '$wan_zone' does not exist"
 	source_zones=""
-	for _n in $(normalize_list "$source_interfaces"); do
+	unique_sources=""
+	for _n in $source_interfaces; do
+		[ "$_n" != "$wan_interface" ] ||
+			die "WAN network '$wan_interface' cannot be a protected network"
+		uci -q get "network.$_n" >/dev/null 2>&1 ||
+			die "Protected network '$_n' does not exist"
+		network_device "$_n" >/dev/null || die "Protected network '$_n' has no device"
 		_z="$(zone_for_network "$_n")"
+		zone_exists "$_z" || die "Firewall zone '$_z' does not exist"
+		[ "$_z" != "$wan_zone" ] ||
+			die "Protected network '$_n' belongs to the WAN firewall zone '$wan_zone'"
+		case " $unique_sources " in *" $_n "*) ;; *) unique_sources="${unique_sources:+$unique_sources }$_n" ;; esac
 		case " $source_zones " in *" $_z "*) ;; *) source_zones="${source_zones:+$source_zones }$_z" ;; esac
 	done
+	source_interfaces="$unique_sources"
 
 	if [ "$enabled" = 1 ]; then
-		backup_dir="$(backup_uci_state enable-managed)"
-		uci set "$config.globals.configured=$enabled"
-		uci set "$config.globals.wan_interface=$wan_interface"
-		uci set "$config.globals.wan_zone=$wan_zone"
-		set_list globals source_interface "$source_interfaces"
-		set_list globals source_zone "$source_zones"
-		uci set "$config.globals.dns_enforce=$dns_enforce"
-		uci set "$config.globals.block_dot=$block_dot"
-		uci set "$config.globals.source_include_vpn=$include_vpn"
-		uci commit "$config"
+		backup_dir="$(backup_uci_state enable-managed)" ||
+			die 'Unable to back up router state before enabling managed mode'
+		if ! persist_base_config; then
+			if restore_uci_state "$backup_dir"; then
+				rm -rf "$backup_dir"
+				die 'Unable to save managed settings; previous router state was restored'
+			fi
+			rm -rf "$backup_dir"
+			die 'Unable to save managed settings and automatic rollback was incomplete'
+		fi
 		# Run in a subshell because die() exits the current shell. This keeps the
 		# failure catchable here so the UCI snapshot is actually restored.
 		if ! ( apply_system ); then
-			restore_uci_state "$backup_dir"
-			die "Managed mode failed; restored $backup_dir"
+			if restore_uci_state "$backup_dir"; then
+				rm -rf "$backup_dir"
+				die 'Managed mode failed; previous router state was restored'
+			fi
+			rm -rf "$backup_dir"
+			die 'Managed mode failed and automatic rollback was incomplete'
 		fi
+		rm -rf "$backup_dir"
 	else
-		uci set "$config.globals.configured=$enabled"
-		uci set "$config.globals.wan_interface=$wan_interface"
-		uci set "$config.globals.wan_zone=$wan_zone"
-		set_list globals source_interface "$source_interfaces"
-		set_list globals source_zone "$source_zones"
-		uci set "$config.globals.dns_enforce=$dns_enforce"
-		uci set "$config.globals.block_dot=$block_dot"
-		uci set "$config.globals.source_include_vpn=$include_vpn"
-		uci commit "$config"
-		remove_managed
+		backup_dir="$(backup_uci_state disable-managed)" ||
+			die 'Unable to back up router state before disabling managed mode'
+		if ! persist_base_config || ! "$0" _remove-managed-inner; then
+			if restore_uci_state "$backup_dir"; then
+				rm -rf "$backup_dir"
+				die 'Managed mode could not be disabled; previous router state was restored'
+			fi
+			rm -rf "$backup_dir"
+			die 'Managed mode disable failed and automatic rollback was incomplete'
+		fi
+		rm -rf "$backup_dir"
 	fi
 }
 
@@ -1555,10 +2089,32 @@ zone_for_network() {
 coverage_add() {
 	name="$1"
 	valid_name "$name" || die 'Invalid network name'
-	add_list_unique "$config" globals source_interface "$name"
-	add_list_unique "$config" globals source_zone "$(zone_for_network "$name")"
-	uci commit "$config"
-	if [ "$(getv globals configured)" = 1 ]; then apply_system; fi
+	uci -q get "network.$name" >/dev/null 2>&1 ||
+		die "Network '$name' does not exist"
+	network_device "$name" >/dev/null || die "Network '$name' has no device"
+	zone="$(zone_for_network "$name")"
+	zone_exists "$zone" || die "Firewall zone '$zone' does not exist"
+	wan_interface="$(getv globals wan_interface)"
+	wan_zone="$(getv globals wan_zone)"
+	[ -z "$wan_interface" ] || [ "$name" != "$wan_interface" ] ||
+		die "WAN network '$name' cannot be a protected network"
+	[ -z "$wan_zone" ] || [ "$zone" != "$wan_zone" ] ||
+		die "Network '$name' belongs to the WAN firewall zone '$wan_zone'"
+	backup_dir="$(backup_uci_state coverage-add)" || die 'Unable to back up router configuration'
+	if ! add_list_unique "$config" globals source_interface "$name" ||
+	   ! add_list_unique "$config" globals source_zone "$zone" ||
+	   ! uci commit "$config" ||
+	   ! printf ' %s ' "$(get_list globals source_interface)" | grep -Fq " $name " ||
+	   ! printf ' %s ' "$(get_list globals source_zone)" | grep -Fq " $zone " ||
+	   { [ "$(getv globals configured)" = 1 ] && ! apply_system; }; then
+		if restore_uci_state "$backup_dir"; then
+			rm -rf "$backup_dir"
+			die 'Unable to add protected network; previous router state was restored'
+		fi
+		rm -rf "$backup_dir"
+		die 'Unable to add protected network and automatic rollback was incomplete'
+	fi
+	rm -rf "$backup_dir"
 }
 
 coverage_remove() {
@@ -1568,21 +2124,34 @@ coverage_remove() {
 	for i in $(get_list globals source_interface); do
 		[ "$i" = "$name" ] || new="${new:+$new }$i"
 	done
-	set_list globals source_interface "$new"
+	[ -n "$new" ] || die 'At least one protected network must remain'
 	zone="$(zone_for_network "$name")"
 	keep=0
 	for i in $new; do
 		[ "$(zone_for_network "$i")" = "$zone" ] && keep=1
 	done
+	zn="$(get_list globals source_zone)"
 	if [ "$keep" = 0 ]; then
 		zn=''
 		for z in $(get_list globals source_zone); do
 			[ "$z" = "$zone" ] || zn="${zn:+$zn }$z"
 		done
-		set_list globals source_zone "$zn"
 	fi
-	uci commit "$config"
-	if [ "$(getv globals configured)" = 1 ]; then apply_system; fi
+	backup_dir="$(backup_uci_state coverage-remove)" || die 'Unable to back up router configuration'
+	if ! set_list globals source_interface "$new" ||
+	   ! set_list globals source_zone "$zn" ||
+	   ! uci commit "$config" ||
+	   [ "$(normalize_list "$(get_list globals source_interface)")" != "$new" ] ||
+	   [ "$(normalize_list "$(get_list globals source_zone)")" != "$zn" ] ||
+	   { [ "$(getv globals configured)" = 1 ] && ! apply_system; }; then
+		if restore_uci_state "$backup_dir"; then
+			rm -rf "$backup_dir"
+			die 'Unable to remove protected network; previous router state was restored'
+		fi
+		rm -rf "$backup_dir"
+		die 'Unable to remove protected network and automatic rollback was incomplete'
+	fi
+	rm -rf "$backup_dir"
 }
 
 run_action() {
@@ -1621,11 +2190,19 @@ run_action() {
 				action_status "$id" error 'Unable to remove the network; see /tmp/ikev2-system-action.log.'
 			fi
 			;;
+		device)
+			action_status "$id" running 'Applying and verifying device routing...'
+			if IKEV2_ACTION_LOCK_HELD=1 /usr/libexec/ikev2-devices "$@"; then
+				action_status "$id" ok 'Device routing updated.'
+			else
+				action_status "$id" error 'Device routing failed; previous PBR configuration was restored.'
+			fi
+			;;
 		dns-set)
 			dns_error_file="/tmp/ikev2-dns-action-$id.error"
 			rm -f "$dns_error_file"
 			action_status "$id" running 'Applying and testing DNS settings...'
-			if ( dns_apply "$@" ) 2>"$dns_error_file"; then
+			if "$0" _dns-apply-inner "$@" 2>"$dns_error_file"; then
 				action_status "$id" ok 'DNS settings applied.'
 			else
 				cat "$dns_error_file" >&2 2>/dev/null || true
@@ -1655,6 +2232,7 @@ case "${1:-}" in
 		;;
 	failclosed-check)
 		failclosed_check
+		failclosed_ipv6_check
 		printf 'failclosed_route=ok\n'
 		;;
 	install-deps)
@@ -1679,7 +2257,16 @@ case "${1:-}" in
 		dns_show
 		;;
 	dns-set-async)
+		[ -n "$dns_input_file" ] || dns_input_file="$(input_file_for "${2:-}")"
 		dns_set_async
+		;;
+	_dns-apply-inner)
+		shift
+		dns_apply "$@"
+		;;
+	_validate-dns-endpoint)
+		[ "$#" -eq 3 ] || die 'Expected: protocol endpoint'
+		valid_dns_endpoint "$2" "$3"
 		;;
 	set)
 		shift
@@ -1692,14 +2279,33 @@ case "${1:-}" in
 	apply)
 		apply_system
 		;;
+	_apply-system-inner)
+		apply_system_inner
+		;;
+	_remove-managed-inner)
+		remove_managed
+		;;
+	_disable-managed-inner)
+		uci set "$config.globals.configured=0"
+		uci commit "$config"
+		remove_managed
+		;;
 	_sync-pbr)
 		sync_pbr
 		;;
 	server-apply)
+		apply_server_runtime_transaction "${2:-0}"
+		;;
+	_server-apply-inner)
 		apply_server_runtime "${2:-0}"
 		;;
-	adopt-legacy)
-		adopt_legacy
+	validate-server-zones)
+		[ "$#" -eq 3 ] || die 'Expected: validate-server-zones inbound outbound'
+		validate_server_zone_names "$2" "$3"
+		;;
+	strongswan-security)
+		[ "$#" -eq 2 ] || die 'Expected: strongswan-security client|server'
+		strongswan_security_check "$2"
 		;;
 	access-apply)
 		zone="$(defaultv server firewall_zone ikev2in)"
@@ -1710,9 +2316,8 @@ case "${1:-}" in
 		fw4 -q reload
 		;;
 	disable)
-		uci set "$config.globals.configured=0"
-		uci commit "$config"
-		remove_managed
+		disable_managed ||
+			die 'Unable to disable managed mode; previous state was preserved or restored'
 		;;
 	gateway-network)
 		gateway_network
@@ -1731,6 +2336,19 @@ case "${1:-}" in
 			*) die 'Expected coverage action: add or remove' ;;
 		esac
 		;;
+	device-async)
+		shift
+		case "${1:-}" in
+			add-subnet | remove-subnet | remove-override)
+				[ "$#" -eq 2 ] || die 'Expected device action and address'
+				;;
+			add-override)
+				[ "$#" -eq 3 ] || die 'Expected add-override address mode'
+				;;
+			*) die 'Unsupported device action' ;;
+		esac
+		start_action device "$@"
+		;;
 	_action-run)
 		shift
 		run_action "$@"
@@ -1743,6 +2361,6 @@ case "${1:-}" in
 		fi
 		;;
 	*)
-		die 'Usage: ikev2-manager-system {preflight|deps-plan|doctor|failclosed-check|install-deps|remove-deps|deps-status|get|dns-get|dns-set-async|set|set-async|apply|server-apply|adopt-legacy|access-apply|disable|gateway-network|coverage-add|coverage-remove|coverage-async|action-status}'
+		die 'Usage: ikev2-manager-system {preflight|deps-plan|doctor|failclosed-check|install-deps|remove-deps|deps-status|get|dns-get|dns-set-async|set|set-async|apply|server-apply|validate-server-zones|strongswan-security|access-apply|disable|gateway-network|coverage-add|coverage-remove|coverage-async|device-async|action-status}'
 		;;
 esac

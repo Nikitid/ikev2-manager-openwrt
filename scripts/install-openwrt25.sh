@@ -3,8 +3,10 @@
 set -eu
 
 OPENWRT_APK_TRUST_SHA256=f27474d9261f1084350cf4ba34ecdff29e533769c36483d8dd85566e30a6a703
-OPENWRT_APK_FEED_URL=https://github.com/Nikitid/ikev2-manager-openwrt/releases/latest/download/packages.adb
-OPENWRT_APK_KEY_URL=https://github.com/Nikitid/ikev2-manager-openwrt/releases/latest/download/ikev2-manager-release.pem
+OPENWRT_APK_RELEASE_BASE=https://github.com/Nikitid/ikev2-manager-openwrt/releases/latest/download
+OPENWRT_APK_RELEASE_BASE="${IKEV2_APK_RELEASE_BASE:-$OPENWRT_APK_RELEASE_BASE}"
+OPENWRT_APK_FEED_URL="$OPENWRT_APK_RELEASE_BASE/packages.adb"
+OPENWRT_APK_KEY_URL="$OPENWRT_APK_RELEASE_BASE/ikev2-manager-release.pem"
 PACKAGE_NAME=luci-app-ikev2-manager
 
 fail() {

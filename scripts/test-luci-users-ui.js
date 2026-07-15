@@ -145,6 +145,7 @@ const common = {
 	icon: () => E('svg', {}, []),
 	fieldLabel: title => E('label', {}, [ title ]),
 	inlineResult,
+	inputToken: () => 'test-token',
 	pill: (text, tone) => E('span', { class: 'ikev2-pill ' + tone }, [ text ]),
 	setPill: (node, text, tone) => { node.className = 'ikev2-pill ' + tone; node.textContent = text; },
 	header: (title, subtitle) => E('header', {}, [ title, subtitle ]),

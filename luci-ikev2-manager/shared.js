@@ -3,7 +3,6 @@
 'require fs';
 
 var LANG_KEY = 'ikev2-manager-language';
-var LEGACY_LANG_KEY = 'ikev2-pbr-language';
 var nativeTranslate = (typeof window !== 'undefined' && window._) ? window._ : null;
 
 var ru = {
@@ -75,7 +74,7 @@ var ru = {
 	'Done': 'Готово',
 	'Failed': 'Ошибка',
 	'For Timeweb just paste the API token. Multi-field providers: one VAR="value" per line.': 'Для Timeweb просто вставьте API-токен. Многополевые провайдеры: по одной VAR="value" в строке.',
-	'HTTP-01 (standalone, needs inbound port 80)': 'HTTP-01 (автономный режим, нужен входящий порт 80)',
+	'HTTP-01 (webroot, needs inbound port 80)': 'HTTP-01 (webroot, нужен входящий порт 80)',
 	'Issue the public TLS certificate remote devices use to trust this server. The identity above must be a public DNS name pointing here.': 'Выпустите публичный TLS-сертификат, которым удалённые устройства доверяют этому серверу. Идентичность выше должна быть публичным DNS-именем, указывающим сюда.',
 	'No certificate': 'Сертификата нет',
 	'Paste your API token here': 'Вставьте сюда API-токен',
@@ -217,6 +216,8 @@ var ru = {
 	'strongSwan VICI': 'strongSwan VICI',
 	'strongSwan OpenSSL': 'strongSwan OpenSSL',
 	'strongSwan EAP-MSCHAPv2': 'strongSwan EAP-MSCHAPv2',
+	'Outbound EAP security': 'Безопасность исходящего EAP',
+	'Inbound strongSwan version': 'Версия strongSwan для входящего сервера',
 	'strongSwan X.509': 'strongSwan X.509',
 	'IKEv2 Manager Overview': 'Обзор IKEv2 Manager',
 	'Install the app safely, prepare dependencies, then enable the managed routing configuration only when the checks are green.': 'Безопасно установите приложение, подготовьте зависимости и включайте управляемую маршрутизацию только когда проверки зеленые.',
@@ -302,9 +303,9 @@ var ru = {
 	'Domain routing engine': 'Механизм доменной маршрутизации',
 	'Reliable mode keeps selected domains on the IKEv2 route even when their public addresses change. Other traffic continues through the normal WAN.': 'Надёжный режим сохраняет маршрут выбранных доменов через IKEv2 даже при смене их публичных адресов. Остальной трафик продолжает идти через обычный WAN.',
 	'Reliable mode active': 'Надёжный режим активен',
-	'Legacy mode active': 'Обычный режим активен',
+	'Standard mode active': 'Обычный режим активен',
 	'Enable reliable mode': 'Включить надёжный режим',
-	'Use legacy mode': 'Вернуться к обычному режиму',
+	'Use standard mode': 'Вернуться к обычному режиму',
 	'Selected domains receive stable FakeIP addresses. Only connections to those addresses from covered networks enter the IKEv2 path.': 'Выбранные домены получают стабильные FakeIP-адреса. В IKEv2 попадают только соединения к этим адресам из подключённых к политике сетей.',
 	'dnsmasq currently classifies domains by their public IP addresses. Existing connections may keep an earlier WAN route after an address changes.': 'Сейчас dnsmasq определяет домены по публичным IP-адресам. После смены адреса уже открытое соединение может сохранить прежний маршрут через WAN.',
 	'Unable to start routing-engine change': 'Не удалось запустить смену механизма маршрутизации',
@@ -329,7 +330,7 @@ var ru = {
 	'Remove strongSwan, PBR, sing-box and XFRM/TProxy packages? The VPN and reliable domain routing stop, and managed configuration is cleared. Generic tools and ACME are kept.': 'Удалить пакеты strongSwan, PBR, sing-box и XFRM/TProxy? VPN и надёжная доменная маршрутизация остановятся, управляемая конфигурация будет очищена. Общие инструменты и ACME останутся.',
 	'This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. VPN and routing stay disabled until managed mode is enabled.': 'Будут установлены PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy и пакеты XFRM/TProxy. VPN и маршрутизация останутся выключенными до включения управляемого режима.',
 	'Saved. Domain routing is updating in the background.': 'Сохранено. Доменная маршрутизация обновляется в фоне.',
-	'Choose the public DNS upstream. In reliable mode dnsmasq sends public queries through sing-box, which uses dnsproxy as its upstream; in legacy mode dnsmasq uses dnsproxy directly.': 'Выберите внешний DNS-сервер. В надёжном режиме dnsmasq передаёт публичные запросы в sing-box, который использует dnsproxy как upstream; в обычном режиме dnsmasq обращается к dnsproxy напрямую.',
+	'Choose the public DNS upstream. In reliable mode dnsmasq sends public queries through sing-box, which uses dnsproxy as its upstream; in standard mode dnsmasq uses dnsproxy directly.': 'Выберите внешний DNS-сервер. В надёжном режиме dnsmasq передаёт публичные запросы в sing-box, который использует dnsproxy как upstream; в обычном режиме dnsmasq обращается к dnsproxy напрямую.',
 	'Custom domains': 'Собственные домены',
 	'Custom IP addresses and networks': 'Собственные IP-адреса и сети',
 	'Device routing': 'Маршрутизация устройств',
@@ -611,7 +612,6 @@ var ru = {
 	'The cryptographic and XFRM parameters below are the tested production profile.': 'Ниже указан проверенный рабочий профиль криптографии и XFRM.',
 	'The inbound VPN certificate is missing or expires soon.': 'Сертификат входящего VPN отсутствует или скоро истекает.',
 	'The outbound tunnel is not carrying IPv4 traffic. Routed domains remain blocked by the kill-switch.': 'Исходящий туннель не передаёт IPv4-трафик. Выбранные домены остаются заблокированы защитой от утечки.',
-	'The router is healthy, but this installation still uses the earlier manually managed configuration. Install and import it before letting the app own firewall and PBR.': 'Роутер работает нормально, но пока использует прежнюю ручную конфигурацию. Сначала импортируйте её, затем передайте приложению управление межсетевым экраном и PBR.',
 	'Traffic protected': 'Трафик защищен',
 	'Traffic to VPN only for domains in the list.': 'В VPN идет только трафик к доменам из списка.',
 	'Unable to save the domain list: %s': 'Не удалось сохранить список доменов: %s',
@@ -632,8 +632,6 @@ function defaultLanguage() {
 	if (typeof window === 'undefined')
 		return 'en';
 	var saved = window.localStorage && window.localStorage.getItem(LANG_KEY);
-	if (saved !== 'ru' && saved !== 'en')
-		saved = window.localStorage && window.localStorage.getItem(LEGACY_LANG_KEY);
 	if (saved === 'ru' || saved === 'en')
 		return saved;
 	return (window.navigator && /^ru\b/i.test(window.navigator.language || '')) ? 'ru' : 'en';
@@ -2233,6 +2231,11 @@ function inlineResult() {
 	};
 }
 
+function inputToken() {
+	var random = Math.floor(Math.random() * 0x100000000).toString(36);
+	return Date.now().toString(36) + '-' + random;
+}
+
 function gate(title, subtitle) {
 	return E('div', { 'class': 'ikev2-page' }, [
 		header(title, subtitle),
@@ -2265,7 +2268,8 @@ return baseclass.extend({
 	switchLabel: switchLabel,
 	toggleRow: toggleRow,
 	netPick: netPick,
-	inlineResult: inlineResult,
+		inlineResult: inlineResult,
+		inputToken: inputToken,
 	localizeNav: localizeNav,
 	card: card,
 	section: section,

@@ -28,9 +28,9 @@ install_file 600 openwrt/files/etc/config/ikev2-manager /etc/config/ikev2-manage
 install_file 755 ikev2-manager-runtime/ikev2-xfrm.init /etc/init.d/ikev2-xfrm
 install_file 755 ikev2-manager-runtime/ikev2-health.init /etc/init.d/ikev2-health
 install_file 755 ikev2-manager-runtime/ikev2-domain-router.init /etc/init.d/ikev2-domain-router
-install_file 755 ikev2-manager-runtime/90-ikev2-wan /etc/hotplug.d/iface/90-ikev2-pbr
-install_file 755 ikev2-manager-runtime/90-ikev2-acme /etc/hotplug.d/acme/90-ikev2-pbr
-install_file 600 ikev2-manager-runtime/20-router-xfrm.conf /etc/strongswan.d/charon/20-ikev2-pbr.conf
+install_file 755 ikev2-manager-runtime/90-ikev2-wan /etc/hotplug.d/iface/90-ikev2-manager
+install_file 755 ikev2-manager-runtime/90-ikev2-acme /etc/hotplug.d/acme/90-ikev2-manager
+install_file 600 ikev2-manager-runtime/20-router-xfrm.conf /etc/strongswan.d/charon/20-ikev2-manager.conf
 install_file 644 openwrt/files/etc/ikev2-manager/README /etc/ikev2-manager/README
 install_file 600 openwrt/files/etc/pbr-ikev2-domains.manual.txt /etc/pbr-ikev2-domains.manual.txt
 install_file 600 openwrt/files/etc/pbr-ikev2-addresses.manual.txt /etc/pbr-ikev2-addresses.manual.txt
@@ -135,7 +135,6 @@ cat >"$stage/CONTROL/postinst" <<'EOF'
 [ -n "${IPKG_INSTROOT:-}" ] && exit 0
 rm -f /tmp/luci-indexcache
 rm -rf /tmp/luci-modulecache
-rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-pbr-killswitch.nft
 rm -f /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft
 if [ "$(uci -q get ikev2-manager.globals.configured)" = 1 ]; then
 	fw4 -q reload >/dev/null 2>&1 || true

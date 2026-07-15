@@ -9,8 +9,6 @@ var manualAddressFile = '/etc/pbr-ikev2-addresses.manual.txt';
 var selectedFile  = '/etc/pbr-ikev2-community-selected.txt';
 var statusFile    = '/tmp/ikev2-domains-community.status';
 var communityHelper = '/usr/libexec/ikev2-domains-community';
-var devicesHelper   = '/usr/libexec/ikev2-devices';
-var systemHelper    = '/usr/libexec/ikev2-manager-system';
 var domainRouterHelper = '/usr/libexec/ikev2-domain-router';
 var serviceSelection = {};
 
@@ -25,7 +23,13 @@ function normalizeDomains(value) {
 		if (!domain || domain.charAt(0) === '#')
 			continue;
 
-		if (/\s/.test(domain) || domain.indexOf('@') !== -1 ||
+		var labels = domain.split('.');
+		if (domain.length > 253 || domain.charAt(0) === '.' ||
+		    domain.charAt(domain.length - 1) === '.' || domain.indexOf('..') !== -1 ||
+		    labels.some(function(label) {
+			    return !label || label.length > 63 || label.charAt(0) === '-' ||
+				    label.charAt(label.length - 1) === '-';
+		    }) || /\s/.test(domain) || domain.indexOf('@') !== -1 ||
 		    domain.indexOf('/') !== -1 ||
 		    domain.indexOf('full:') === 0 ||
 		    domain.indexOf('regexp:') === 0 ||
@@ -192,8 +196,10 @@ function parseStatus(text) {
 // (meaning our apply run finished) or the deadline passes. Resolves with the
 // parsed status object, or null on timeout.
 function pollStatus(actionId, deadline) {
-	return L.resolveDefault(fs.read(statusFile), '').then(function(txt) {
-		var st = parseStatus(txt);
+	return L.resolveDefault(fs.exec(communityHelper, [ 'status', actionId ]), {
+		stdout: ''
+	}).then(function(response) {
+		var st = parseStatus((response && response.stdout) || '');
 		if (st.action_id === actionId && (st.state === 'ok' || st.state === 'error'))
 			return st;
 		if (Date.now() >= deadline)
@@ -246,31 +252,6 @@ function updateStatusLine(st) {
 	pre.style.display = lines.length ? '' : 'none';
 }
 
-function parseDeviceDump(stdout) {
-	var entries = [];
-	var lines = (stdout || '').replace(/\r/g, '').split('\n');
-	for (var i = 0; i < lines.length; i++) {
-		var line = lines[i].trim();
-		if (!line) continue;
-		var entry = {};
-		var parts = line.split(' ');
-		for (var j = 0; j < parts.length; j++) {
-			if (!parts[j]) continue;
-			var eqIdx = parts[j].indexOf('=');
-			if (eqIdx > 0)
-				entry[parts[j].slice(0, eqIdx)] = parts[j].slice(eqIdx + 1);
-		}
-		if (entry.addr && entry.mode)
-			entries.push(entry);
-	}
-	return entries;
-}
-
-function validateAddr(addr) {
-	return addr.length > 0 && addr.length < 50 &&
-		/^[0-9.]+(\/[0-9]{1,2})?$/.test(addr);
-}
-
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -282,17 +263,7 @@ return view.extend({
 			L.resolveDefault(fs.exec(communityHelper, [ 'catalog' ]), {
 				code: 1, stdout: ''
 			}),
-			L.resolveDefault(fs.exec(devicesHelper, [ 'dump' ]), {
-				code: 0, stdout: ''
-			}),
-			L.resolveDefault(fs.read(domainFile), '')
-			,
-			L.resolveDefault(fs.exec(systemHelper, [ 'get' ]), {
-				code: 0, stdout: ''
-			}),
-			L.resolveDefault(fs.exec(devicesHelper, [ 'networks' ]), {
-				code: 0, stdout: ''
-			}),
+			L.resolveDefault(fs.read(domainFile), ''),
 			L.resolveDefault(fs.exec(domainRouterHelper, [ 'status' ]), {
 				code: 0, stdout: ''
 			}),
@@ -328,17 +299,19 @@ return view.extend({
 		var addressValue = addresses.join('\n') + (addresses.length ? '\n' : '');
 		var selectedValue = selected.join('\n') + (selected.length ? '\n' : '');
 
-		return Promise.all([
-			fs.write(manualFile, manualValue),
-			fs.write(manualAddressFile, addressValue),
-			fs.write(selectedFile, selectedValue)
-		])
-				.then(function() {
-					textarea.value = manualValue;
-					addressTextarea.value = addressValue;
-					result.busy(_('Rebuilding the PBR list…'));
-					return common.execChecked(communityHelper, [ 'schedule' ],
-						_('Unable to start the PBR rebuild')).then(function(response) {
+			var token = common.inputToken();
+			var inputPrefix = '/tmp/ikev2-domains-input-' + token;
+			return Promise.all([
+				fs.write(inputPrefix + '.domains', manualValue, 384),
+				fs.write(inputPrefix + '.cidrs', addressValue, 384),
+				fs.write(inputPrefix + '.services', selectedValue, 384)
+			])
+					.then(function() {
+						result.busy(_('Rebuilding the PBR list…'));
+						return common.execChecked(communityHelper, [ 'schedule', token ],
+							_('Unable to start the PBR rebuild')).then(function(response) {
+							textarea.value = manualValue;
+							addressTextarea.value = addressValue;
 						var actionId = parseStatus(response.stdout || '').action_id;
 						if (!actionId)
 							throw new Error(_('Action did not start'));
@@ -367,258 +340,23 @@ return view.extend({
 			});
 	},
 
-	renderDevicesTab: function(initialDump, systemConfig, networksDump) {
-		var entries  = parseDeviceDump((initialDump || {}).stdout || '');
-		var tableWrap = E('div', {});
-		var coverageResult = common.inlineResult();
-		var deviceResult = common.inlineResult();
-		var protectedNetworks = (systemConfig.source_interfaces || '').trim()
-			.split(/\s+/).filter(Boolean);
-		function coverageAction(button, action, name) {
-			return common.runJob({
-				button: button,
-				result: coverageResult,
-				busy: _('Applying...'),
-				success: _('Saved'),
-				failure: _('Operation failed'),
-				startPath: systemHelper,
-				startArgs: [ 'coverage-async', action, name ],
-				statusPath: systemHelper,
-				statusArgs: [ 'action-status' ],
-				timeout: 120000,
-				timeoutMessage: _('The operation continues in the background. You can use the button again.'),
-				onSuccess: function(st) {
-					if (st && st.state !== 'timeout') {
-						if (action === 'add' && protectedNetworks.indexOf(name) < 0)
-							protectedNetworks.push(name);
-						if (action === 'remove')
-							protectedNetworks = protectedNetworks.filter(function(item) {
-								return item !== name;
-							});
-						renderCoverage();
-					}
-				}
-			});
-		}
-
-		function doAction(button, cmd, addr, extra, onSuccess) {
-			var args = extra != null ? [ cmd, addr, extra ] : [ cmd, addr ];
-			return common.runAction({
-				button: button,
-				result: deviceResult,
-				busy: _('Saving...'),
-				success: _('Saved'),
-				run: function() {
-					return common.execChecked(devicesHelper, args, _('Operation failed'))
-						.then(function() {
-							return fs.exec(devicesHelper, [ 'dump' ]);
-						}).then(function(r) {
-							showTable(parseDeviceDump((r || {}).stdout || ''));
-						});
-				},
-				onSuccess: onSuccess
-			});
-		}
-
-		function showTable(ents) {
-			while (tableWrap.firstChild)
-				tableWrap.removeChild(tableWrap.firstChild);
-
-			var domains   = ents.filter(function(e) { return e.mode === 'domain'; });
-			var overrides = ents.filter(function(e) { return e.mode !== 'domain'; });
-
-			if (!ents.length) {
-				tableWrap.appendChild(E('div', { 'class': 'ikev2-empty' }, [
-					E('strong', {}, [ _('No custom device rules') ]),
-					E('div', { 'class': 'cbi-section-descr' }, [
-						_('All default network segments still use domain routing. Add a rule below only when a device needs different behavior.')
-					])
-				]));
-				return;
-			}
-
-			if (domains.length) {
-				tableWrap.appendChild(E('h4', {}, [ _('Domain routing') ]));
-				tableWrap.appendChild(
-					E('p', { 'class': 'cbi-section-descr' }, [
-						_('Traffic to VPN only for domains in the list.')
-					])
-				);
-
-				var dRows = domains.map(function(e) {
-					var btn = E('button', {
-						'class': 'cbi-button cbi-button-remove',
-						'click': function(ev) {
-							doAction(ev.currentTarget, 'remove-subnet', e.addr, null);
-						}
-					}, [ _('Remove') ]);
-					return E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td' }, [ E('code', {}, [ e.addr ]) ]),
-						E('td', { 'class': 'td cbi-section-actions' }, [ btn ])
-					]);
-				});
-
-				tableWrap.appendChild(E('table', { 'class': 'table' }, [
-					E('tr', { 'class': 'tr table-titles' }, [
-						E('th', { 'class': 'th' }, [ _('Address / subnet') ]),
-						E('th', { 'class': 'th cbi-section-actions' }, [ _('Actions') ])
-					])
-				].concat(dRows)));
-			}
-
-			if (overrides.length) {
-				tableWrap.appendChild(E('h4', {}, [ _('Device overrides') ]));
-
-				var oRows = overrides.map(function(e) {
-					var label = e.mode === 'fullroute' ? _('Full route') : _('Exclude');
-
-					var rmBtn = E('button', {
-						'class': 'cbi-button cbi-button-remove',
-						'click': function(ev) {
-							doAction(ev.currentTarget, 'remove-override', e.addr, null);
-						}
-					}, [ _('Remove') ]);
-
-					return E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td' }, [ E('code', {}, [ e.addr ]) ]),
-						E('td', { 'class': 'td' }, [
-							common.pill(label, e.mode === 'fullroute' ? 'good' : 'warn')
-						]),
-						E('td', { 'class': 'td cbi-section-actions' }, [ rmBtn ])
-					]);
-				});
-
-				tableWrap.appendChild(E('table', { 'class': 'table' }, [
-					E('tr', { 'class': 'tr table-titles' }, [
-						E('th', { 'class': 'th' }, [ _('Device / IP') ]),
-						E('th', { 'class': 'th' }, [ _('Mode') ]),
-						E('th', { 'class': 'th cbi-section-actions' }, [ _('Actions') ])
-					])
-				].concat(oRows)));
-			}
-		}
-
-		showTable(entries);
-
-		/* ── Network pick-list (add a router subnet to domain routing) ──── */
-		var allNetOptions = ((networksDump || {}).stdout || '').replace(/\r/g, '').split('\n')
-			.map(function(line) {
-				var eq = line.indexOf('=');
-				return eq > 0 ? { name: line.slice(0, eq), cidr: line.slice(eq + 1) } : null;
-			}).filter(Boolean);
-
-		var coverageTags = E('div', { 'class': 'ikev2-tags', 'style': 'margin-bottom:.9rem;' });
-		var networkSelect = E('select', { 'class': 'cbi-input-select' });
-
-		function renderCoverage() {
-			coverageTags.replaceChildren.apply(coverageTags, protectedNetworks.map(function(name) {
-				return E('span', { 'class': 'ikev2-tag' }, [
-					name,
-					E('button', {
-						'class': 'ikev2-tag-x',
-						'title': _('Remove'),
-						'aria-label': _('Remove'),
-						'click': function(ev) {
-							coverageAction(ev.currentTarget, 'remove', name);
-						}
-					}, [ '\u00d7' ])
-				]);
-			}));
-			var available = allNetOptions.filter(function(o) {
-				return protectedNetworks.indexOf(o.name) === -1;
-			});
-			networkSelect.replaceChildren.apply(networkSelect, available.length ?
-				available.map(function(o) {
-					return E('option', { 'value': o.name }, [ o.name + ' — ' + o.cidr ]);
-				}) : [ E('option', { 'value': '' }, [ _('No networks available') ]) ]);
-		}
-		renderCoverage();
-
-		var addNetworkBtn = E('button', {
-			'class': 'cbi-button cbi-button-add',
-			'click': function() {
-				var name = networkSelect.value;
-				if (!name) return;
-				coverageAction(addNetworkBtn, 'add', name);
-			}
-		}, [ _('Add') ]);
-
-		/* ── Add-override form ─────────────────────────────────────────── */
-		var overrideInput = E('input', {
-			'type': 'text',
-			'class': 'cbi-input-text',
-			'placeholder': '192.168.1.55'
-		});
-
-		var modeSelect = E('select', { 'class': 'cbi-input-select' }, [
-			E('option', { 'value': 'fullroute' }, [ _('Full route — all traffic via VPN') ]),
-			E('option', { 'value': 'exclude'   }, [ _('Exclude — always use WAN')          ])
-		]);
-
-		var addOverrideBtn = E('button', {
-			'class': 'cbi-button cbi-button-add',
-			'click': function() {
-				var addr = overrideInput.value.trim();
-				if (!validateAddr(addr)) {
-					deviceResult.err(_('Invalid address'));
-					return;
-				}
-				doAction(addOverrideBtn, 'add-override', addr, modeSelect.value,
-					function() { overrideInput.value = ''; });
-			}
-		}, [ _('Add') ]);
-
-		return E('div', {}, [
-			E('div', { 'class': 'ikev2-note' }, [
-				_('Domain routing sends only listed destinations through the VPS. Full route sends all IPv4 traffic for a device through the VPS. Exclude always uses the home WAN.')
-			]),
-			E('div', { 'class': 'ikev2-section', 'style': 'margin-top:1rem;' }, [
-				E('div', { 'class': 'ikev2-section-head' }, [
-					E('div', {}, [
-						E('h4', { 'style': 'margin:.2em 0 .25em;' },
-							[ _('Default coverage') ]),
-						E('p', { 'class': 'cbi-section-descr' }, [
-							_('These networks participate in domain-based VPN routing. Add another router network from the list.')
-						])
-					]),
-					common.pill(_('Active'), 'good')
-				]),
-				coverageTags,
-				E('div', { 'class': 'ikev2-inline-form' }, [
-					networkSelect, coverageResult.node, addNetworkBtn
-				])
-			]),
-			E('h4', { 'style': 'margin:1.2rem 0 .5rem;' },
-				[ _('Custom device rules') ]),
-			tableWrap,
-			E('div', { 'class': 'ikev2-section', 'style': 'margin-top:1rem;' }, [
-				E('h4', { 'style': 'margin:.2em 0 .5em;' },
-					[ _('Add device override') ]),
-				E('p', { 'class': 'cbi-section-descr' },
-					[ _('Per-device exception inserted before the base PBR rule.') ]),
-				E('div', { 'class': 'ikev2-inline-form' },
-					[ overrideInput, modeSelect, deviceResult.node, addOverrideBtn ])
-			])
-		]);
-	},
 
 	render: function(data) {
 		var self = this;
-		var systemConfig = common.parseKeyValues((data[6] || {}).stdout || '');
 
 		/* ── Domains tab ────────────────────────────────────────────────── */
 		var manual = data[0] || '';
-		var manualAddresses = data[10] || '';
+		var manualAddresses = data[7] || '';
 		var selected = {};
 		var selectedLines = (data[1] || '').trim().split(/\s+/).filter(Boolean);
 		var status = (data[2] || '').trim();
 		var statusData = parseStatus(status);
-		var routerStatus = parseStatus(((data[8] || {}).stdout || ''));
+		var routerStatus = parseStatus(((data[5] || {}).stdout || ''));
 		var fakeipActive = routerStatus.engine === 'fakeip' &&
 			routerStatus.service === 'running' &&
 			routerStatus.nft === 'active' &&
 			routerStatus.rule === 'active';
-		var activeDomains = (data[5] || '').split('\n').filter(function(line) {
+		var activeDomains = (data[4] || '').split('\n').filter(function(line) {
 			return line.trim() && line.trim().charAt(0) !== '#';
 		}).length;
 		var policyPill = common.pill('', 'neutral');
@@ -639,7 +377,7 @@ return view.extend({
 				return /^[a-z0-9_]+$/.test(name);
 			});
 		var ipServices = {};
-		((data[9] || {}).stdout || '').trim().split(/\s+/)
+		((data[6] || {}).stdout || '').trim().split(/\s+/)
 			.filter(function(name) {
 				return /^[a-z0-9_]+$/.test(name);
 			})
@@ -661,7 +399,7 @@ return view.extend({
 
 		var engineResult = common.inlineResult();
 		var enginePill = common.pill(
-			fakeipActive ? _('Reliable mode active') : _('Legacy mode active'),
+			fakeipActive ? _('Reliable mode active') : _('Standard mode active'),
 			fakeipActive ? 'good' : 'warn');
 		var engineSummary = E('p', {
 			'class': 'ikev2-engine-summary'
@@ -670,11 +408,11 @@ return view.extend({
 			_('dnsmasq currently classifies domains by their public IP addresses. Existing connections may keep an earlier WAN route after an address changes.') ]);
 		var engineButton = E('button', {
 			'class': 'cbi-button ' + (fakeipActive ? 'cbi-button-reset' : 'cbi-button-apply')
-		}, [ fakeipActive ? _('Use legacy mode') : _('Enable reliable mode') ]);
+		}, [ fakeipActive ? _('Use standard mode') : _('Enable reliable mode') ]);
 		function updateEngineState(active, message) {
 			fakeipActive = active;
 			common.setPill(enginePill,
-				active ? _('Reliable mode active') : _('Legacy mode active'),
+				active ? _('Reliable mode active') : _('Standard mode active'),
 				active ? 'good' : 'warn');
 			engineSummary.textContent = active ?
 				_('Selected domains receive stable FakeIP addresses. Only connections to those addresses from covered networks enter the IKEv2 path.') :
@@ -682,7 +420,7 @@ return view.extend({
 			engineButton.className = 'cbi-button ' +
 				(active ? 'cbi-button-reset' : 'cbi-button-apply');
 			engineButton.textContent = active ?
-				_('Use legacy mode') : _('Enable reliable mode');
+					_('Use standard mode') : _('Enable reliable mode');
 			if (message)
 				engineResult.ok(message);
 		}

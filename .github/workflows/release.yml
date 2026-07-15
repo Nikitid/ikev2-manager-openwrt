@@ -56,6 +56,7 @@ jobs:
           . ./apk-feed.env
           OPENWRT_SDK_DIR="$PWD/build/${OPENWRT_APK_SDK_ARCHIVE%.tar.zst}" \
           OPENWRT_APK_SIGNING_KEY=/tmp/ikev2-manager-apk-release.pem \
+          OPENWRT_APK_RELEASE_TAG="$GITHUB_REF_NAME" \
             ./scripts/build-apk-feed.sh
       - name: Remove APK release signing key
         if: ${{ always() }}

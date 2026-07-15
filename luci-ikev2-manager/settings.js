@@ -14,8 +14,10 @@ function input(type, value, attrs) {
 	}, attrs || {}));
 }
 
-function encodeBase64(value) {
-	return window.btoa(unescape(encodeURIComponent(value)));
+function writeProfileInput(value) {
+	var token = common.inputToken();
+	return fs.write('/var/run/ikev2-manager-profile-' + token + '.in', value, 384)
+		.then(function() { return token; });
 }
 
 function disclosure(title, description, content, badges) {
@@ -127,24 +129,28 @@ return view.extend({
 		});
 
 		rawSave.addEventListener('click', function() {
-			return common.runJob({
-				button: rawSave,
-				result: rawResult,
-				busy: _('Validating and loading...'),
-				success: _('Loaded'),
-				failure: _('Custom configuration was rejected'),
-				startPath: helper,
-				startArgs: [ 'advanced-start', 'inbound', encodeBase64(rawText.value) ],
-				statusPath: helper,
-				statusArgs: [ 'action-status' ],
-				timeout: 90000,
-				timeoutMessage: _('The operation continues in the background. You can use the button again.'),
-				onSuccess: function(st) {
-					if (st && st.state !== 'timeout') {
-						customMode = true;
-						updateServerPills();
+			return writeProfileInput(rawText.value).then(function(token) {
+				return common.runJob({
+					button: rawSave,
+					result: rawResult,
+					busy: _('Validating and loading...'),
+					success: _('Loaded'),
+					failure: _('Custom configuration was rejected'),
+					startPath: helper,
+					startArgs: [ 'advanced-start', 'inbound', token ],
+					statusPath: helper,
+					statusArgs: [ 'action-status' ],
+					timeout: 90000,
+					timeoutMessage: _('The operation continues in the background. You can use the button again.'),
+					onSuccess: function(st) {
+						if (st && st.state !== 'timeout') {
+							customMode = true;
+							updateServerPills();
+						}
 					}
-				}
+				});
+			}).catch(function(error) {
+				rawResult.err(error.message || error);
 			});
 		});
 
@@ -170,10 +176,9 @@ return view.extend({
 			});
 		});
 
-		save.addEventListener('click', function() {
-			var serverArgs = [
-				'server-set',
-				enabled.checked ? '1' : '0',
+			save.addEventListener('click', function() {
+				var serverValues = [
+					enabled.checked ? '1' : '0',
 				identity.value.trim(),
 				pool4.value.trim(),
 				gateway4.value.trim(),
@@ -185,32 +190,32 @@ return view.extend({
 				ikeRekey.value,
 				childRekey.value,
 				mtu.value,
-				mobike.checked ? '1' : '0',
-				fragmentation.checked ? '1' : '0'
-			];
-			var accessArgs = [
-				'server-access-set',
-				localTs.value.trim(),
+					mobike.checked ? '1' : '0',
+					fragmentation.checked ? '1' : '0',
+					localTs.value.trim(),
 				allowInternet.checked ? '1' : '0',
 				allowLan.checked ? '1' : '0',
 				allowRouter.checked ? '1' : '0',
 				routerPorts.value.trim(),
 				lanZones.value.trim(),
-				firewallZone.value.trim(),
-				outboundZone.value.trim(),
-				'1' /* defer apply: the server save runs one detached apply for both */
-			];
+					firewallZone.value.trim(),
+					outboundZone.value.trim()
+				];
 			return common.runAction({
 				button: save,
 				result: serverResult,
 				busy: _('Saving...'),
 				failure: _('Server settings rejected'),
-				run: function() {
-					common.setPill(serverStatusPill, _('Applying...'), 'info');
-					return common.execChecked(helper, accessArgs, _('Access policy rejected'))
-						.then(function() {
-							return common.execChecked(helper, serverArgs, _('Server settings rejected'));
-						}).then(function(response) {
+					run: function() {
+						var token = common.inputToken();
+						common.setPill(serverStatusPill, _('Applying...'), 'info');
+						return fs.write('/var/run/ikev2-manager-server-' + token + '.in',
+							serverValues.join('\n') + '\n', 384 /* 0600 */)
+							.then(function() {
+								return common.execChecked(helper, [ 'server-input', token ],
+									_('Server settings rejected'));
+							})
+							.then(function(response) {
 							var started = common.parseKeyValues(response.stdout || '');
 							if (!started.action_id) {
 								serverResult.ok(_('Saved'));
@@ -242,13 +247,13 @@ return view.extend({
 			});
 		});
 
-		// ── ACME certificate ─────────────────────────────────────────────
+			// ACME certificate
 		var acmeEmail = input('text', acme.email, { 'placeholder': 'you@example.com' });
 		var acmeMethod = E('select', { 'class': 'cbi-input-select' }, [
 			E('option', { 'value': 'dns', 'selected': acme.method !== 'http' ? '' : null },
 				[ _('DNS-01 (DNS provider API)') ]),
-			E('option', { 'value': 'http', 'selected': acme.method === 'http' ? '' : null },
-				[ _('HTTP-01 (standalone, needs inbound port 80)') ])
+				E('option', { 'value': 'http', 'selected': acme.method === 'http' ? '' : null },
+					[ _('HTTP-01 (webroot, needs inbound port 80)') ])
 		]);
 		var providerList = (acme.providers || '').trim().split(/\s+/).filter(Boolean);
 		if (!providerList.length)
@@ -293,31 +298,35 @@ return view.extend({
 		// argument. The token is large and secret; passing it on the exec
 		// command line is brittle (rpcd's file-exec ACL globs the arguments and
 		// arbitrary base64 broke the match) and leaks it into the process list.
-		// fs.write keeps acme-set argument-free.
-		function writeAcmeInput() {
-			var payload = [
+			// A one-shot token prevents concurrent LuCI sessions from sharing an
+			// input file; only the non-secret token is passed on the command line.
+			function writeAcmeInput() {
+				var token = common.inputToken();
+				var payload = [
 				acmeEmail.value.trim(),
 				acmeMethod.value,
 				acmeProvider.value,
 				acmeStaging.checked ? '1' : '0'
 			].join('\n') + '\n' + acmeCreds.value + '\n';
-			return fs.write('/tmp/ikev2-acme.in', payload, 384 /* 0600 */);
-		}
+				return fs.write('/tmp/ikev2-acme-' + token + '.in', payload, 384 /* 0600 */)
+					.then(function() { return token; });
+			}
 
-		acmeSave.addEventListener('click', function() {
-			return common.runAction({
+			acmeSave.addEventListener('click', function() {
+				return common.runAction({
 				button: acmeSave,
 				result: acmeResult,
 				busy: _('Saving...'),
 				success: _('ACME settings saved.'),
 				failure: _('ACME settings rejected'),
-				run: function() {
-					return writeAcmeInput().then(function() {
-						return common.execChecked(helper, [ 'acme-set' ], _('ACME settings rejected'));
-					});
-				}
+					run: function() {
+						return writeAcmeInput().then(function(token) {
+							return common.execChecked(helper, [ 'acme-set', token ], _('ACME settings rejected'));
+						});
+					},
+					onSuccess: refreshServerState
+				});
 			});
-		});
 
 		acmeRequest.addEventListener('click', function() {
 			return common.runAction({
@@ -327,15 +336,16 @@ return view.extend({
 				failure: _('Certificate request failed.'),
 				run: function() {
 					acmeResult.busy(_('Saving settings...'));
-					return writeAcmeInput().then(function() {
-						return common.execChecked(helper, [ 'acme-set' ], _('ACME settings rejected'));
-					}).then(function() {
+						return writeAcmeInput().then(function(token) {
+							return common.execChecked(helper, [ 'acme-set', token ], _('ACME settings rejected'));
+						}).then(function() {
 						return common.execChecked(helper, [ 'acme-issue' ], _('Certificate request failed.'));
 					}).then(function(response) {
 						var started = common.parseKeyValues(response.stdout || '');
 						if (!started.action_id)
 							throw new Error(_('Certificate request did not start.'));
-						return common.pollAction(helper, [ 'acme-status' ], started.action_id, {
+							return common.pollAction(helper,
+								[ 'action-status', started.action_id ], started.action_id, {
 							timeout: 300000,
 							interval: 2500,
 							onProgress: function(st) {
@@ -408,15 +418,41 @@ return view.extend({
 			}
 		}
 
-		function refreshServerState() {
-			return Promise.all([
-				L.resolveDefault(fs.exec(helper, [ 'server-get' ]), { stdout: '' }),
-				L.resolveDefault(fs.exec(helper, [ 'acme-get' ]), { stdout: '' })
-			]).then(function(results) {
-				value = common.parseKeyValues(results[0].stdout || '');
-				acme = common.parseKeyValues(results[1].stdout || '');
-				updateServerPills();
-			});
+			function refreshServerState() {
+				return Promise.all([
+					L.resolveDefault(fs.exec(helper, [ 'server-get' ]), { stdout: '' }),
+					L.resolveDefault(fs.exec(helper, [ 'server-access-get' ]), { stdout: '' }),
+					L.resolveDefault(fs.exec(helper, [ 'acme-get' ]), { stdout: '' }),
+					L.resolveDefault(fs.exec(helper, [ 'advanced-mode', 'inbound' ]), { stdout: '0' })
+				]).then(function(results) {
+					value = common.parseKeyValues(results[0].stdout || '');
+					access = common.parseKeyValues(results[1].stdout || '');
+					acme = common.parseKeyValues(results[2].stdout || '');
+					customMode = (results[3].stdout || '').trim() === '1';
+					enabled.checked = value.enabled === '1';
+					identity.value = value.identity || '';
+					pool4.value = value.pool4 || '';
+					gateway4.value = value.gateway4 || '';
+					dns4.value = value.dns4 || '';
+					certSource.value = value.cert_source || '';
+					certFile.value = value.cert_file || '';
+					keyFile.value = value.key_file || '';
+					dpd.value = value.dpd || '';
+					ikeRekey.value = value.ike_rekey || '';
+					childRekey.value = value.child_rekey || '';
+					mtu.value = value.mtu || '';
+					mobike.checked = value.mobike === '1';
+					fragmentation.checked = value.fragmentation === '1';
+					localTs.value = access.local_ts || '';
+					allowInternet.checked = access.allow_internet === '1';
+					allowLan.checked = access.allow_lan === '1';
+					allowRouter.checked = access.allow_router === '1';
+					routerPorts.value = access.router_ports || '';
+					lanZones.value = access.lan_zones || '';
+					firewallZone.value = access.firewall_zone || '';
+					outboundZone.value = access.outbound_zone || '';
+					updateServerPills();
+				});
 		}
 		updateServerPills();
 
