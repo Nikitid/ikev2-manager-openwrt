@@ -207,4 +207,24 @@ run_manager _action-run profile-invalid advanced-set outbound "$tmp/profile.in"
 [ ! -e "$tmp/profile.in" ]
 grep -q '^state=error$' "$tmp/actions/profile-invalid.status"
 
+client_state="$(run_manager client-get)"
+printf '%s\n' "$client_state" | grep -Fxq 'interface_present=0'
+printf '%s\n' "$client_state" | grep -Fxq 'interface_bytes_in=0'
+printf '%s\n' "$client_state" | grep -Fxq 'interface_bytes_out=0'
+
+mkdir -p "$tmp/root/sys/class/net/ipsec-out/statistics"
+printf '%s\n' 123456 >"$tmp/root/sys/class/net/ipsec-out/statistics/rx_bytes"
+printf '%s\n' 654321 >"$tmp/root/sys/class/net/ipsec-out/statistics/tx_bytes"
+client_state="$(run_manager client-get)"
+printf '%s\n' "$client_state" | grep -Fxq 'interface_present=1'
+printf '%s\n' "$client_state" | grep -Fxq 'interface_bytes_in=123456'
+printf '%s\n' "$client_state" | grep -Fxq 'interface_bytes_out=654321'
+
+grep -Fq "var trafficCard = liveCard(_('Current SA traffic'));" \
+	"$root/luci-ikev2-manager/client.js"
+grep -Fq "var accumulatedTrafficCard = liveCard(_('Accumulated tunnel traffic'));" \
+	"$root/luci-ikev2-manager/client.js"
+grep -Fq "_('Counter age: %s').format(common.formatDuration(child['install-time']))" \
+	"$root/luci-ikev2-manager/client.js"
+
 printf 'client transaction tests OK\n'

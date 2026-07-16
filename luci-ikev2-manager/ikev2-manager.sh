@@ -489,6 +489,15 @@ get_list() {
 	uci -q get "$uci_config.$1.$2" 2>/dev/null || true
 }
 
+interface_counter() {
+	local file="$root/sys/class/net/$1/statistics/$2" value=0
+	if [ -r "$file" ]; then
+		IFS= read -r value <"$file" || value=0
+	fi
+	case "$value" in '' | *[!0-9]*) value=0 ;; esac
+	printf '%s\n' "$value"
+}
+
 set_list() {
 	section="$1"
 	option="$2"
@@ -2170,6 +2179,13 @@ case "${1:-}" in
 		done
 		printf 'reconnect_cooldown=%s\n' \
 			"$(getv_default client reconnect_cooldown 15)"
+		if [ -d "$root/sys/class/net/ipsec-out" ]; then
+			printf 'interface_present=1\n'
+		else
+			printf 'interface_present=0\n'
+		fi
+		printf 'interface_bytes_in=%s\n' "$(interface_counter ipsec-out rx_bytes)"
+		printf 'interface_bytes_out=%s\n' "$(interface_counter ipsec-out tx_bytes)"
 		;;
 	client-input)
 		[ -n "$client_input_file" ] || client_input_file="$(input_file_for client "${2:-}")"

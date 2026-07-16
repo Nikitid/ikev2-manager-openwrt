@@ -2,6 +2,11 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.1.3 - 2026-07-16
+
+- Split outbound traffic reporting into the current CHILD_SA counter, including
+  its age since the last rekey, and cumulative `ipsec-out` interface traffic.
+
 ## 1.1.2 - 2026-07-16
 
 - Replaced predictable free-text network, firewall-zone, address-plan, MTU,

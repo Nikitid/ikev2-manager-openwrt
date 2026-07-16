@@ -318,9 +318,10 @@ return view.extend({
 			};
 		}
 
-		var gatewayCard = liveCard(_('Remote gateway'), 'third');
-		var virtualCard = liveCard(_('Virtual IPv4'), 'third');
-		var trafficCard = liveCard(_('Current session traffic'), 'third');
+		var gatewayCard = liveCard(_('Remote gateway'));
+		var virtualCard = liveCard(_('Virtual IPv4'));
+		var trafficCard = liveCard(_('Current SA traffic'));
+		var accumulatedTrafficCard = liveCard(_('Accumulated tunnel traffic'));
 
 		function updateConnectionView() {
 			common.setPill(statusPill,
@@ -339,8 +340,18 @@ return view.extend({
 			var up = child ? Number(child['bytes-out'] || 0) : 0;
 			trafficCard.value.textContent = common.formatBytes(down + up);
 			trafficCard.detail.textContent = child ?
-				_('Down %s, up %s').format(common.formatBytes(down), common.formatBytes(up)) :
+				_('Down %s, up %s').format(common.formatBytes(down), common.formatBytes(up)) +
+					' · ' + _('Counter age: %s').format(common.formatDuration(child['install-time'])) :
 				_('No active traffic SA');
+			var interfacePresent = value.interface_present === '1';
+			var totalDown = Number(value.interface_bytes_in || 0);
+			var totalUp = Number(value.interface_bytes_out || 0);
+			accumulatedTrafficCard.value.textContent = interfacePresent ?
+				common.formatBytes(totalDown + totalUp) : '-';
+			accumulatedTrafficCard.detail.textContent = interfacePresent ?
+				_('Down %s, up %s').format(common.formatBytes(totalDown), common.formatBytes(totalUp)) +
+					' · ' + _('Since ipsec-out was created') :
+				_('ipsec-out is unavailable');
 		}
 
 		function refreshClientState() {
@@ -703,7 +714,8 @@ return view.extend({
 				E('div', { 'class': 'ikev2-grid' }, [
 					gatewayCard.node,
 					virtualCard.node,
-					trafficCard.node
+					trafficCard.node,
+					accumulatedTrafficCard.node
 				]),
 				common.section(_('Connection'),
 					_('Changing these values reloads the tunnel profile and reconnects it. The PBR policy remains loaded.'),
