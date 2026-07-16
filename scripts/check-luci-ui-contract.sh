@@ -46,6 +46,30 @@ grep -Fq "notice ? 'info'" 'luci-ikev2-manager/setup.js'
 grep -Fq "Reset app and remove dependencies" 'luci-ikev2-manager/setup.js'
 grep -Fq "removing only the package in Software preserves configuration and dependencies" \
 	'luci-ikev2-manager/setup.js'
+dns_toggle_line="$(grep -n "common.toggleRow(blockDot" 'luci-ikev2-manager/setup.js' | cut -d: -f1)"
+apply_bar_line="$(grep -n "applyResult.node" 'luci-ikev2-manager/setup.js' | tail -n1 | cut -d: -f1)"
+[ -n "$dns_toggle_line" ] && [ -n "$apply_bar_line" ] &&
+	[ "$apply_bar_line" -gt "$dns_toggle_line" ] || {
+	printf '%s\n' 'Overview Apply must follow the managed, network and DNS controls' >&2
+	exit 1
+}
+grep -Fq "Network and DNS changes are applied together by the button at the bottom." \
+	'luci-ikev2-manager/setup.js'
+grep -Fq "Target VPN and routing packages" 'luci-ikev2-manager/setup.js'
+grep -Fq "Shared router packages" 'luci-ikev2-manager/setup.js'
+grep -Fq "targetPackages" 'luci-ikev2-manager/setup.js'
+grep -Fq "sharedPackages" 'luci-ikev2-manager/setup.js'
+grep -Fq "Allow all router ports" 'luci-ikev2-manager/settings.js'
+grep -Fq "routerPorts.disabled = !allowRouter.checked || allowAllRouterPorts.checked" \
+	'luci-ikev2-manager/settings.js'
+grep -Fq "Keep LuCI and SSH ports in this list" 'luci-ikev2-manager/settings.js'
+grep -Fq '"/usr/libexec/ikev2-devices zones": [ "exec" ]' "$acl"
+grep -Fq "common.multiChoiceWithCustom(access.lan_zones" \
+	'luci-ikev2-manager/settings.js'
+grep -Fq "addressPlanPicker" 'luci-ikev2-manager/settings.js'
+grep -Fq "choiceWithCustom" 'luci-ikev2-manager/client.js'
+grep -Fq "choiceWithCustom(value.wan_interface" 'luci-ikev2-manager/setup.js'
+grep -Fq "E('option', { 'value': customValue }" 'luci-ikev2-manager/shared.js'
 grep -Fq "Date.now() + 120000" 'luci-ikev2-domains/editor.js'
 grep -Fq "result.busy(_(st.message))" 'luci-ikev2-domains/editor.js'
 for phase in \

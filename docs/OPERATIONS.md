@@ -121,6 +121,20 @@ longest phase and can take tens of seconds. Saving an unchanged managed setup
 or unchanged policy list returns after a live health check instead of restarting
 PBR; a failed health check automatically falls back to the full apply path.
 
+## UPnP and dynamic DNS
+
+`miniupnpd-nftables` can coexist with the manager because it uses dedicated
+firewall4 chains. When the inbound server is enabled, UPnP permission rules
+must reserve UDP 500 and 4500 before any broad allow range. The dependency
+doctor warns when either port remains available to UPnP and reports an active
+mapping on either port as a conflict. Reserve ports owned by adjacent services,
+such as an MTProto redirect, in the same way.
+
+A dynamic-DNS hostname must publish the router's direct public address; an
+HTTP-only proxy cannot carry IKEv2. Keep the inbound certificate identity equal
+to that hostname. DNS-01 ACME avoids sharing TCP 80 with router web services or
+other port-forwarding features.
+
 ## Certificates
 
 Inspect the active inbound certificate:

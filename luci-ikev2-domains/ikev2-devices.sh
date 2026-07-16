@@ -4,6 +4,7 @@
 #
 # Commands:
 #   dump                         — list current state (domain/fullroute/exclude)
+#   zones                        — list firewall zones and their logical networks
 #   add-subnet    <addr>         — add addr to the base domain policy
 #   remove-subnet <addr>         — remove addr from the base domain policy
 #   add-override  <addr> <mode>  — mode: fullroute | exclude
@@ -251,14 +252,30 @@ cmd_networks() {
     done
 }
 
+# List firewall zones as name=network1 network2 lines. Keeping this beside the
+# logical-network enumerator gives LuCI one authoritative source for pickers and
+# avoids asking users to type UCI zone names.
+cmd_zones() {
+	local sections section name networks
+	sections="$(uci show firewall 2>/dev/null \
+		| sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p')"
+	for section in $sections; do
+		name="$(uci -q get "firewall.$section.name" 2>/dev/null || true)"
+		[ -n "$name" ] || continue
+		networks="$(uci -q get "firewall.$section.network" 2>/dev/null || true)"
+		printf '%s=%s\n' "$name" "$networks"
+	done
+}
+
 case "${1:-}" in
     dump)             cmd_dump ;;
     networks)         cmd_networks ;;
+	zones)            cmd_zones ;;
     add-subnet)       cmd_add_subnet "${2:-}" ;;
     remove-subnet)    cmd_remove_subnet "${2:-}" ;;
     add-override)     cmd_add_override "${2:-}" "${3:-}" ;;
     remove-override)  cmd_remove_override "${2:-}" ;;
     *)
-        printf 'usage: %s {dump|networks|add-subnet <addr>|remove-subnet <addr>|add-override <addr> <mode>|remove-override <addr>}\n' "$0" >&2
+        printf 'usage: %s {dump|networks|zones|add-subnet <addr>|remove-subnet <addr>|add-override <addr> <mode>|remove-override <addr>}\n' "$0" >&2
         exit 1 ;;
 esac

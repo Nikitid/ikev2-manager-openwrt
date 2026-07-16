@@ -4,6 +4,8 @@
 'require ikev2-manager.shared as common';
 
 var helper = '/usr/libexec/ikev2-manager';
+var systemHelper = '/usr/libexec/ikev2-manager-system';
+var devicesHelper = '/usr/libexec/ikev2-devices';
 
 function input(type, value, attrs) {
 	return E('input', Object.assign({
@@ -33,6 +35,103 @@ function disclosure(title, description, content, badges) {
 	]);
 }
 
+function parseNamedValues(stdout) {
+	return (stdout || '').replace(/\r/g, '').split('\n').map(function(line) {
+		var eq = line.indexOf('=');
+		return eq > 0 ? { name: line.slice(0, eq), value: line.slice(eq + 1).trim() } : null;
+	}).filter(Boolean);
+}
+
+function ipv4Number(value) {
+	var parts = String(value || '').split('.');
+	if (parts.length !== 4 || parts.some(function(part) {
+		return !/^\d+$/.test(part) || Number(part) > 255;
+	})) return null;
+	return parts.reduce(function(total, part) { return total * 256 + Number(part); }, 0);
+}
+
+function cidrRange(value) {
+	var parts = String(value || '').split('/');
+	var address = ipv4Number(parts[0]);
+	var prefix = Number(parts[1]);
+	if (address == null || prefix < 0 || prefix > 32) return null;
+	var size = Math.pow(2, 32 - prefix);
+	var start = Math.floor(address / size) * size;
+	return { start: start, end: start + size - 1 };
+}
+
+function poolRange(value) {
+	var parts = String(value || '').split('-');
+	var start = ipv4Number(parts[0]);
+	var end = ipv4Number(parts[1]);
+	return start == null || end == null || start > end ? null : { start: start, end: end };
+}
+
+function rangesOverlap(a, b) {
+	return a && b && a.start <= b.end && a.end >= b.start;
+}
+
+function addressPlanPicker(current, networks) {
+	var candidates = [
+		{ pool: '10.20.30.10-10.20.30.100', gateway: '10.20.30.1/24', dns: '10.20.30.1' },
+		{ pool: '10.30.40.10-10.30.40.100', gateway: '10.30.40.1/24', dns: '10.30.40.1' },
+		{ pool: '10.66.0.10-10.66.0.100', gateway: '10.66.0.1/24', dns: '10.66.0.1' },
+		{ pool: '172.27.0.10-172.27.0.100', gateway: '172.27.0.1/24', dns: '172.27.0.1' }
+	];
+	var connected = (networks || []).map(function(network) { return cidrRange(network.value); })
+		.filter(Boolean);
+	var currentKey = [ current.pool, current.gateway, current.dns ].join('|');
+	var plans = candidates.filter(function(plan) {
+		var key = [ plan.pool, plan.gateway, plan.dns ].join('|');
+		return key === currentKey || !connected.some(function(network) {
+			return rangesOverlap(poolRange(plan.pool), network);
+		});
+	}).map(function(plan) {
+		plan.key = [ plan.pool, plan.gateway, plan.dns ].join('|');
+		return plan;
+	});
+	var customKey = '__ikev2_custom_plan__';
+	var pool = input('text', current.pool, { 'placeholder': '10.20.30.10-10.20.30.100' });
+	var gateway = input('text', current.gateway, { 'placeholder': '10.20.30.1/24' });
+	var dns = input('text', current.dns, { 'placeholder': '10.20.30.1' });
+	var custom = E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
+		common.fieldLabel(_('Client IPv4 pool')), pool,
+		common.fieldLabel(_('Pool gateway'), _('Router address and prefix assigned to ipsec-in.')), gateway,
+		common.fieldLabel(_('DNS for VPN clients')), dns
+	]);
+	var select = E('select', { 'class': 'cbi-input-select' }, plans.map(function(plan) {
+		return E('option', { 'value': plan.key }, [
+			plan.gateway.replace(/\.1\/24$/, '.0/24') + ' — ' + plan.pool
+		]);
+	}).concat([ E('option', { 'value': customKey }, [ _('Custom…') ]) ]));
+	var node = E('div', { 'class': 'ikev2-choice-custom' }, [ select, custom ]);
+
+	function sync() { custom.style.display = select.value === customKey ? '' : 'none'; }
+	function setValue(next) {
+		pool.value = next.pool || '';
+		gateway.value = next.gateway || '';
+		dns.value = next.dns || '';
+		var key = [ pool.value, gateway.value, dns.value ].join('|');
+		select.value = plans.some(function(plan) { return plan.key === key; }) ? key : customKey;
+		sync();
+	}
+	select.addEventListener('change', function() {
+		var plan = plans.find(function(item) { return item.key === select.value; });
+		if (plan) {
+			pool.value = plan.pool;
+			gateway.value = plan.gateway;
+			dns.value = plan.dns;
+		}
+		sync();
+	});
+	setValue(current);
+	return {
+		node: node,
+		values: function() { return { pool: pool.value.trim(), gateway: gateway.value.trim(), dns: dns.value.trim() }; },
+		setValue: setValue
+	};
+}
+
 return view.extend({
 	load: function() {
 		return L.resolveDefault(fs.stat('/usr/sbin/swanmon'), null).then(function(ready) {
@@ -43,7 +142,10 @@ return view.extend({
 				fs.exec(helper, [ 'server-access-get' ]),
 				fs.exec(helper, [ 'advanced-mode', 'inbound' ]),
 				fs.exec(helper, [ 'advanced-read', 'inbound' ]),
-				L.resolveDefault(fs.exec(helper, [ 'acme-get' ]), { stdout: '' })
+				L.resolveDefault(fs.exec(helper, [ 'acme-get' ]), { stdout: '' }),
+				L.resolveDefault(fs.exec(devicesHelper, [ 'networks' ]), { stdout: '' }),
+				L.resolveDefault(fs.exec(devicesHelper, [ 'zones' ]), { stdout: '' }),
+				L.resolveDefault(fs.exec(systemHelper, [ 'get' ]), { stdout: '' })
 			]).then(function(d) { d.ready = true; return d; });
 		});
 	},
@@ -55,43 +157,80 @@ return view.extend({
 		var value = common.parseKeyValues(data[0].stdout);
 		var access = common.parseKeyValues(data[1].stdout);
 		var acme = common.parseKeyValues((data[4] && data[4].stdout) || '');
+		var networks = parseNamedValues((data[5] && data[5].stdout) || '');
+		var zones = parseNamedValues((data[6] && data[6].stdout) || '');
+		var system = common.parseKeyValues((data[7] && data[7].stdout) || '');
 		var customMode = (data[2].stdout || '').trim() === '1';
 		var enabled = input('checkbox', value.enabled);
-		var identity = input('text', value.identity, {
-			'placeholder': 'vpn.example.com'
-		});
-		var pool4 = input('text', value.pool4, {
-			'placeholder': '10.20.30.10-10.20.30.100'
-		});
-		var gateway4 = input('text', value.gateway4, {
-			'placeholder': '10.20.30.1/24'
-		});
-		var dns4 = input('text', value.dns4, { 'placeholder': '10.20.30.1' });
-		var localTs = input('text', access.local_ts, {
-			'placeholder': '0.0.0.0/0'
+		var identities = (acme.identities || '').trim().split(/\s+/).filter(Boolean);
+		if (value.identity && identities.indexOf(value.identity) < 0) identities.unshift(value.identity);
+		var identity = common.choiceWithCustom(value.identity, identities.map(function(name) {
+			return { value: name, label: name };
+		}), { placeholder: 'vpn.example.com' });
+		var addressPlan = addressPlanPicker({
+			pool: value.pool4, gateway: value.gateway4, dns: value.dns4
+		}, networks);
+		var routedNetworks = networks.filter(function(network) {
+			return network.name !== system.wan_interface;
+		}).map(function(network) { return network.value; }).join(' ');
+		var trafficChoices = [ { value: '0.0.0.0/0', label: _('All IPv4 traffic (full tunnel)') } ];
+		if (routedNetworks)
+			trafficChoices.push({ value: routedNetworks, label: _('Internal router networks') + ' — ' + routedNetworks });
+		var localTs = common.choiceWithCustom(access.local_ts, trafficChoices, {
+			placeholder: '0.0.0.0/0'
 		});
 		var allowInternet = input('checkbox', access.allow_internet);
 		var allowLan = input('checkbox', access.allow_lan);
 		var allowRouter = input('checkbox', access.allow_router);
+		var allowAllRouterPorts = input('checkbox', access.router_ports ? '0' : '1');
 		var routerPorts = input('text', access.router_ports, {
-			'placeholder': _('Empty means all router services')
+			'placeholder': '80 443 1111 7681'
 		});
-		var lanZones = input('text', access.lan_zones, { 'placeholder': 'lan' });
-		var firewallZone = input('text', access.firewall_zone, { 'placeholder': 'ikev2in' });
-		var outboundZone = input('text', access.outbound_zone, { 'placeholder': 'ikev2out' });
-		var certSource = input('text', value.cert_source, {
-			'placeholder': '/etc/ssl/acme'
+		var internalZones = zones.filter(function(zone) {
+			var zoneNetworks = zone.value.split(/\s+/).filter(Boolean);
+			return zone.name !== access.firewall_zone && zone.name !== access.outbound_zone &&
+				zoneNetworks.indexOf(system.wan_interface) < 0;
 		});
-		var certFile = input('text', value.cert_file, {
-			'placeholder': _('Automatic from identity')
-		});
-		var keyFile = input('text', value.key_file, {
-			'placeholder': _('Automatic from identity')
-		});
-		var mtu = input('number', value.mtu, { 'min': '1280', 'max': '1500' });
-		var dpd = input('number', value.dpd, { 'min': '10', 'max': '300' });
-		var ikeRekey = input('number', value.ike_rekey, { 'min': '3600', 'max': '86400' });
-		var childRekey = input('number', value.child_rekey, { 'min': '900', 'max': '86400' });
+		var lanZones = common.multiChoiceWithCustom(access.lan_zones,
+			internalZones.map(function(zone) {
+				return { value: zone.name, label: zone.value ? zone.name + ' — ' + zone.value : zone.name };
+			}), { placeholder: 'lan guest iot' });
+		var firewallZone = common.choiceWithCustom(access.firewall_zone, [
+			{ value: 'ikev2in', label: _('Automatic') + ' — ikev2in' }
+		], { placeholder: 'ikev2in' });
+		var outboundZone = common.choiceWithCustom(access.outbound_zone, [
+			{ value: 'ikev2out', label: _('Automatic') + ' — ikev2out' }
+		], { placeholder: 'ikev2out' });
+		var certSource = common.choiceWithCustom(value.cert_source, [
+			{ value: '/etc/ssl/acme', label: _('Automatic') + ' — /etc/ssl/acme' }
+		], { placeholder: '/etc/ssl/acme' });
+		var certFile = common.choiceWithCustom(value.cert_file, [
+			{ value: '', label: _('Automatic from identity') }
+		], { placeholder: '/etc/ssl/acme/vpn.example.com.fullchain.crt' });
+		var keyFile = common.choiceWithCustom(value.key_file, [
+			{ value: '', label: _('Automatic from identity') }
+		], { placeholder: '/etc/ssl/acme/vpn.example.com.key' });
+		var mtu = common.choiceWithCustom(value.mtu, [
+			{ value: '1400', label: '1400 — ' + _('recommended') },
+			{ value: '1360', label: '1360 — ' + _('constrained networks') },
+			{ value: '1280', label: '1280 — ' + _('minimum') },
+			{ value: '1500', label: '1500 — ' + _('no reduction') }
+		], { type: 'number', attrs: { 'min': '1280', 'max': '1500' } });
+		var dpd = common.choiceWithCustom(value.dpd, [
+			{ value: '30', label: '30 ' + _('seconds') + ' — ' + _('recommended') },
+			{ value: '60', label: '60 ' + _('seconds') },
+			{ value: '120', label: '120 ' + _('seconds') }
+		], { type: 'number', attrs: { 'min': '10', 'max': '300' } });
+		var ikeRekey = common.choiceWithCustom(value.ike_rekey, [
+			{ value: '14400', label: '4 ' + _('hours') + ' — ' + _('recommended') },
+			{ value: '28800', label: '8 ' + _('hours') },
+			{ value: '86400', label: '24 ' + _('hours') }
+		], { type: 'number', attrs: { 'min': '3600', 'max': '86400' } });
+		var childRekey = common.choiceWithCustom(value.child_rekey, [
+			{ value: '3600', label: '1 ' + _('hour') + ' — ' + _('recommended') },
+			{ value: '7200', label: '2 ' + _('hours') },
+			{ value: '14400', label: '4 ' + _('hours') }
+		], { type: 'number', attrs: { 'min': '900', 'max': '86400' } });
 		var mobike = input('checkbox', value.mobike);
 		var fragmentation = input('checkbox', value.fragmentation);
 		var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, [
@@ -123,6 +262,14 @@ return view.extend({
 				rawSave
 			])
 		]);
+
+		function updateRouterAccessControls() {
+			allowAllRouterPorts.disabled = !allowRouter.checked;
+			routerPorts.disabled = !allowRouter.checked || allowAllRouterPorts.checked;
+		}
+
+		allowRouter.addEventListener('change', updateRouterAccessControls);
+		allowAllRouterPorts.addEventListener('change', updateRouterAccessControls);
 
 		rawToggle.addEventListener('click', function() {
 			rawPanel.style.display = rawPanel.style.display === 'none' ? '' : 'none';
@@ -177,29 +324,35 @@ return view.extend({
 		});
 
 			save.addEventListener('click', function() {
+				if (allowRouter.checked && !allowAllRouterPorts.checked &&
+				    !routerPorts.value.trim()) {
+					serverResult.err(_('Enter at least one allowed router port or enable all router ports.'));
+					return;
+				}
+				var planValues = addressPlan.values();
 				var serverValues = [
 					enabled.checked ? '1' : '0',
-				identity.value.trim(),
-				pool4.value.trim(),
-				gateway4.value.trim(),
-				dns4.value.trim(),
-				certSource.value.trim(),
-				certFile.value.trim(),
-				keyFile.value.trim(),
-				dpd.value,
-				ikeRekey.value,
-				childRekey.value,
-				mtu.value,
+				identity.value(),
+				planValues.pool,
+				planValues.gateway,
+				planValues.dns,
+				certSource.value(),
+				certFile.value(),
+				keyFile.value(),
+				dpd.value(),
+				ikeRekey.value(),
+				childRekey.value(),
+				mtu.value(),
 					mobike.checked ? '1' : '0',
 					fragmentation.checked ? '1' : '0',
-					localTs.value.trim(),
+					localTs.value(),
 				allowInternet.checked ? '1' : '0',
 				allowLan.checked ? '1' : '0',
 				allowRouter.checked ? '1' : '0',
-				routerPorts.value.trim(),
-				lanZones.value.trim(),
-					firewallZone.value.trim(),
-					outboundZone.value.trim()
+				allowAllRouterPorts.checked ? '' : routerPorts.value.trim(),
+				lanZones.value(),
+					firewallZone.value(),
+					outboundZone.value()
 				];
 			return common.runAction({
 				button: save,
@@ -430,31 +583,34 @@ return view.extend({
 					acme = common.parseKeyValues(results[2].stdout || '');
 					customMode = (results[3].stdout || '').trim() === '1';
 					enabled.checked = value.enabled === '1';
-					identity.value = value.identity || '';
-					pool4.value = value.pool4 || '';
-					gateway4.value = value.gateway4 || '';
-					dns4.value = value.dns4 || '';
-					certSource.value = value.cert_source || '';
-					certFile.value = value.cert_file || '';
-					keyFile.value = value.key_file || '';
-					dpd.value = value.dpd || '';
-					ikeRekey.value = value.ike_rekey || '';
-					childRekey.value = value.child_rekey || '';
-					mtu.value = value.mtu || '';
+					identity.setValue(value.identity || '');
+					addressPlan.setValue({
+						pool: value.pool4 || '', gateway: value.gateway4 || '', dns: value.dns4 || ''
+					});
+					certSource.setValue(value.cert_source || '');
+					certFile.setValue(value.cert_file || '');
+					keyFile.setValue(value.key_file || '');
+					dpd.setValue(value.dpd || '');
+					ikeRekey.setValue(value.ike_rekey || '');
+					childRekey.setValue(value.child_rekey || '');
+					mtu.setValue(value.mtu || '');
 					mobike.checked = value.mobike === '1';
 					fragmentation.checked = value.fragmentation === '1';
-					localTs.value = access.local_ts || '';
+					localTs.setValue(access.local_ts || '');
 					allowInternet.checked = access.allow_internet === '1';
 					allowLan.checked = access.allow_lan === '1';
 					allowRouter.checked = access.allow_router === '1';
 					routerPorts.value = access.router_ports || '';
-					lanZones.value = access.lan_zones || '';
-					firewallZone.value = access.firewall_zone || '';
-					outboundZone.value = access.outbound_zone || '';
+					allowAllRouterPorts.checked = !access.router_ports;
+					lanZones.setValue(access.lan_zones || '');
+					firewallZone.setValue(access.firewall_zone || '');
+					outboundZone.setValue(access.outbound_zone || '');
+					updateRouterAccessControls();
 					updateServerPills();
 				});
 		}
 		updateServerPills();
+		updateRouterAccessControls();
 
 		var accessPanel = disclosure(
 			_('Client routes and access'),
@@ -463,7 +619,7 @@ return view.extend({
 				E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
 					common.fieldLabel(_('Advertised IPv4 destinations'),
 						_('Space-separated CIDRs. Use 0.0.0.0/0 for a full-tunnel client route.')),
-					localTs,
+					localTs.node,
 					common.fieldLabel(_('Allow Internet'),
 						_('Permit forwarding to home WAN and the outbound IKEv2 policy path.')),
 					common.switchLabel(allowInternet),
@@ -471,19 +627,22 @@ return view.extend({
 						_('Permit forwarding to the LAN firewall zones listed below.')),
 					common.switchLabel(allowLan),
 					common.fieldLabel(_('Internal firewall zones')),
-					lanZones,
+					lanZones.node,
 					common.fieldLabel(_('Allow router itself'),
 						_('Allows router services on its LAN, VPN and public addresses. This also enables same-router public-IP loopback.')),
 					common.switchLabel(allowRouter),
+					common.fieldLabel(_('Allow all router ports'),
+						_('Permit every router service from authenticated inbound VPN clients. The restricted port list is disabled while this is on.')),
+					common.switchLabel(allowAllRouterPorts),
 					common.fieldLabel(_('Allowed router ports'),
-						_('Optional TCP/UDP ports or ranges. Leave empty to allow all protocols and services.')),
+						_('Complete TCP/UDP allowlist used when all ports are off. Keep LuCI and SSH ports in this list or inbound VPN management access will stop.')),
 					routerPorts
 				]),
 				E('details', { 'class': 'ikev2-advanced' }, [
 					E('summary', {}, [ _('Firewall zone integration') ]),
 					E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
-						common.fieldLabel(_('Inbound VPN zone')), firewallZone,
-						common.fieldLabel(_('Outbound IKEv2 zone')), outboundZone
+						common.fieldLabel(_('Inbound VPN zone')), firewallZone.node,
+						common.fieldLabel(_('Outbound IKEv2 zone')), outboundZone.node
 					])
 				])
 			])
@@ -533,22 +692,22 @@ return view.extend({
 					common.fieldLabel(_('IKE fragmentation'),
 						_('Avoids oversized IKE packets on constrained networks.')),
 					common.switchLabel(fragmentation),
-					common.fieldLabel(_('XFRM MTU')), mtu
+					common.fieldLabel(_('XFRM MTU')), mtu.node
 				]),
 				E('details', { 'class': 'ikev2-advanced' }, [
 					E('summary', {}, [ _('Advanced timers') ]),
 					E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
-						common.fieldLabel(_('DPD interval')), dpd,
-						common.fieldLabel(_('IKE rekey')), ikeRekey,
-						common.fieldLabel(_('CHILD rekey')), childRekey
+						common.fieldLabel(_('DPD interval')), dpd.node,
+						common.fieldLabel(_('IKE rekey')), ikeRekey.node,
+						common.fieldLabel(_('CHILD rekey')), childRekey.node
 					])
 				]),
 				E('details', { 'class': 'ikev2-advanced' }, [
 					E('summary', {}, [ _('Certificate paths') ]),
 					E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
-						common.fieldLabel(_('ACME certificate directory')), certSource,
-						common.fieldLabel(_('Certificate file override')), certFile,
-						common.fieldLabel(_('Private key override')), keyFile
+						common.fieldLabel(_('ACME certificate directory')), certSource.node,
+						common.fieldLabel(_('Certificate file override')), certFile.node,
+						common.fieldLabel(_('Private key override')), keyFile.node
 					])
 				]),
 				E('details', { 'class': 'ikev2-advanced' }, [
@@ -577,12 +736,12 @@ return view.extend({
 							common.fieldLabel(_('Enable server'),
 								_('Listen on WAN UDP 500 and 4500.')),
 							common.switchLabel(enabled),
-							common.fieldLabel(_('Public identity')), identity,
-							common.fieldLabel(_('Client IPv4 pool')), pool4,
-							common.fieldLabel(_('Pool gateway'),
-								_('Router address and prefix assigned to ipsec-in.')),
-							gateway4,
-							common.fieldLabel(_('DNS for VPN clients')), dns4
+							common.fieldLabel(_('Public identity'),
+								_('Choose a detected ACME name or enter another DNS name.')),
+							identity.node,
+							common.fieldLabel(_('VPN address plan'),
+								_('Presets that overlap a connected router network are hidden.')),
+							addressPlan.node
 						]),
 						E('div', { 'class': 'ikev2-disclosure-stack' }, [
 							accessPanel,

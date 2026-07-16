@@ -48,7 +48,7 @@ Vendor firmware, snapshots и firewall3 не поддерживаются. OpenW
 
 ### OpenWrt 24.10
 
-Скачайте `luci-app-ikev2-manager_1.1.1_all.ipk` из
+Скачайте `luci-app-ikev2-manager_1.1.2_all.ipk` из
 [Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) и
 загрузите пакет через:
 

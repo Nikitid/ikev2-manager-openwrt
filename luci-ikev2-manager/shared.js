@@ -6,6 +6,20 @@ var LANG_KEY = 'ikev2-manager-language';
 var nativeTranslate = (typeof window !== 'undefined' && window._) ? window._ : null;
 
 var ru = {
+	'Custom…': 'Своё значение…',
+	'Automatic': 'Автоматически',
+	'recommended': 'рекомендуется',
+	'constrained networks': 'сложные сети',
+	'minimum': 'минимум',
+	'no reduction': 'без уменьшения',
+	'seconds': 'секунд',
+	'hour': 'час',
+	'hours': 'часов',
+	'All IPv4 traffic (full tunnel)': 'Весь IPv4-трафик (полный туннель)',
+	'Internal router networks': 'Внутренние сети роутера',
+	'VPN address plan': 'Адресный план VPN',
+	'Choose a detected ACME name or enter another DNS name.': 'Выберите обнаруженное имя ACME или укажите другое DNS-имя.',
+	'Presets that overlap a connected router network are hidden.': 'Варианты, пересекающиеся с подключёнными сетями роутера, скрыты.',
 	'Reconnect': 'Переподключить',
 	'Reconnected': 'Переподключено',
 	'Saving and connecting...': 'Сохраняю и подключаю...',
@@ -191,6 +205,7 @@ var ru = {
 	'Apply': 'Применить',
 	'Let the app manage the router': 'Разрешить приложению управлять роутером',
 	'Master switch: lets the app create and own the router routing, firewall and PBR. Off = the app only watches.': 'Главный переключатель: разрешает приложению управлять маршрутизацией, межсетевым экраном и PBR. В выключенном состоянии приложение только наблюдает.',
+	'Master switch: lets the app create and own the router routing, firewall and PBR. Network and DNS changes are applied together by the button at the bottom.': 'Главный переключатель разрешает приложению управлять маршрутизацией, межсетевым экраном и PBR. Изменения сети и DNS применяются вместе кнопкой внизу страницы.',
 	'Install the runtime dependencies below first — then this switch becomes available.': 'Сначала установите зависимости ниже — после этого выключатель станет доступен.',
 	'Outbound Tunnel': 'Исходящий туннель',
 	'Inbound Server': 'Входящий сервер',
@@ -213,6 +228,19 @@ var ru = {
 	'Not configured': 'Не настроено',
 	'Ready': 'Готово к работе',
 	'Dependencies missing': 'Не хватает зависимостей',
+	'System readiness': 'Системная готовность',
+	'Firmware, feeds, storage, memory and reserved network resources.': 'Прошивка, репозитории, хранилище, память и зарезервированные сетевые ресурсы.',
+	'Target VPN and routing packages': 'Целевые пакеты VPN и маршрутизации',
+	'Components installed specifically for IKEv2, PBR and reliable domain routing.': 'Компоненты, устанавливаемые специально для IKEv2, PBR и надёжной доменной маршрутизации.',
+	'Shared router packages': 'Общие пакеты роутера',
+	'Components that OpenWrt or other apps may also use. Reset removes them only when this app installed them and no other package still needs them.': 'Компоненты, которые также могут использовать OpenWrt и другие приложения. Сброс удаляет их, только если они установлены этим приложением и больше не нужны другим пакетам.',
+	'HTTP client': 'HTTP-клиент',
+	'UPnP reservation for IKEv2': 'Резервирование портов IKEv2 в UPnP',
+	'not-enabled': 'не включён',
+	'UDP-500-and-4500-reserved': 'UDP 500 и 4500 зарезервированы',
+	'UDP-4500-available-to-UPnP': 'UDP 4500 доступен для проброса через UPnP',
+	'UDP-500,4500-available-to-UPnP': 'UDP 500 и 4500 доступны для проброса через UPnP',
+	'active-UDP-500-or-4500-mapping': 'активный UPnP-проброс конфликтует с UDP 500/4500',
 	'OpenWrt release': 'Версия OpenWrt',
 	'firewall4': 'firewall4',
 	'dnsmasq nftset support': 'Поддержка nftset в dnsmasq',
@@ -252,6 +280,7 @@ var ru = {
 	'Matching zones used for forwarding and DNS enforcement.': 'Зоны, используемые для перенаправления трафика и принудительного DNS.',
 	'DNS policy': 'DNS-политика',
 	'Domain routing is deterministic only when clients use the router resolver.': 'Доменная маршрутизация предсказуема только если клиенты используют DNS роутера.',
+	'Domain routing is deterministic only when clients use the router resolver. These options take effect only after Apply.': 'Доменная маршрутизация предсказуема только если клиенты используют DNS роутера. Эти параметры вступают в силу только после нажатия «Применить».',
 	'Redirect plain DNS': 'Перенаправлять обычный DNS',
 	'Redirect TCP/UDP port 53 from protected zones to the router.': 'Перенаправляет TCP/UDP порт 53 из защищаемых зон на роутер.',
 	'Block DNS-over-TLS': 'Блокировать DNS-over-TLS',
@@ -396,7 +425,11 @@ var ru = {
 	'Internal firewall zones': 'Зоны локальных сетей',
 	'Allow router itself': 'Разрешить сам роутер',
 	'Allows router services on its LAN, VPN and public addresses. This also enables same-router public-IP loopback.': 'Разрешает доступ к службам роутера по его локальным, VPN- и публичным адресам.',
+	'Allow all router ports': 'Разрешить все порты роутера',
+	'Permit every router service from authenticated inbound VPN clients. The restricted port list is disabled while this is on.': 'Разрешает аутентифицированным входящим VPN-клиентам все сервисы роутера. Пока опция включена, ограниченный список портов недоступен.',
 	'Allowed router ports': 'Разрешённые порты роутера',
+	'Complete TCP/UDP allowlist used when all ports are off. Keep LuCI and SSH ports in this list or inbound VPN management access will stop.': 'Полный белый список TCP/UDP, используемый когда разрешение всех портов выключено. Оставьте здесь порты LuCI и SSH, иначе управление через входящий VPN перестанет работать.',
+	'Enter at least one allowed router port or enable all router ports.': 'Укажите хотя бы один разрешённый порт роутера или включите разрешение всех портов.',
 	'Optional TCP/UDP ports or ranges. Leave empty to allow all protocols and services.': 'Опциональные TCP/UDP порты или диапазоны. Пусто означает разрешить все протоколы и сервисы.',
 	'Connection behavior': 'Поведение подключения',
 	'The defaults are tuned for phones roaming between Wi-Fi and mobile networks.': 'Значения по умолчанию настроены для телефонов, переходящих между Wi-Fi и мобильной сетью.',
@@ -1292,6 +1325,30 @@ function styles() {
 			.ikev2-form-grid-compact input[type="number"],
 			.ikev2-form-grid-compact select,
 			.ikev2-form-grid-compact textarea { max-width: none; }
+			.ikev2-choice-custom {
+				display: grid;
+				gap: .55rem;
+				width: 100%;
+			}
+			.ikev2-choice-custom > select,
+			.ikev2-choice-custom > input { max-width: none; }
+			.ikev2-choice-list {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+				gap: .45rem;
+			}
+			.ikev2-choice-list label {
+				display: flex;
+				align-items: center;
+				gap: .5rem;
+				min-height: 2.4rem;
+				padding: .45rem .65rem;
+				border: 1px solid var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				background: var(--ikev2-surface);
+				cursor: pointer;
+			}
+			.ikev2-choice-list input { margin: 0; }
 			.ikev2-dns-managed { margin-top: 1rem; }
 			.ikev2-dns-preset-picker {
 				display: grid;
@@ -2192,6 +2249,113 @@ function switchLabel(input, text) {
 	]);
 }
 
+// A finite set of safe presets with an explicit final Custom… branch. The
+// current value is always preserved: an unknown value selects Custom and is
+// shown in the input instead of being replaced by a default.
+function choiceWithCustom(value, choices, options) {
+	options = options || {};
+	var customValue = '__ikev2_custom__';
+	var field = E('input', Object.assign({
+		'type': options.type || 'text',
+		'class': 'cbi-input-text',
+		'placeholder': options.placeholder || ''
+	}, options.attrs || {}));
+	var select = E('select', { 'class': 'cbi-input-select' },
+		(choices || []).map(function(choice) {
+			return E('option', { 'value': String(choice.value) }, [ choice.label ]);
+		}).concat([
+			E('option', { 'value': customValue }, [ options.customLabel || _('Custom…') ])
+		]));
+	var node = E('div', { 'class': 'ikev2-choice-custom' }, [ select, field ]);
+
+	function hasChoice(next) {
+		return (choices || []).some(function(choice) {
+			return String(choice.value) === String(next == null ? '' : next);
+		});
+	}
+
+	function sync() {
+		var custom = select.value === customValue;
+		field.style.display = custom ? '' : 'none';
+		field.disabled = !custom;
+	}
+
+	function setValue(next) {
+		next = String(next == null ? '' : next);
+		field.value = next;
+		select.value = hasChoice(next) ? next : customValue;
+		sync();
+	}
+
+	select.addEventListener('change', function() {
+		if (select.value !== customValue)
+			field.value = select.value;
+		sync();
+	});
+	setValue(value);
+	return {
+		node: node,
+		select: select,
+		input: field,
+		value: function() { return select.value === customValue ? field.value.trim() : select.value; },
+		setValue: setValue
+	};
+}
+
+// Multi-value counterpart used for detected firewall zones. Known values are
+// checkboxes; values no longer present on the router stay in the Custom field.
+function multiChoiceWithCustom(value, choices, options) {
+	options = options || {};
+	var inputs = [];
+	var customToggle = E('input', { 'type': 'checkbox' });
+	var customField = E('input', {
+		'type': 'text',
+		'class': 'cbi-input-text',
+		'placeholder': options.placeholder || ''
+	});
+	var list = E('div', { 'class': 'ikev2-choice-list' },
+		(choices || []).map(function(choice) {
+			var checkbox = E('input', { 'type': 'checkbox', 'value': String(choice.value) });
+			inputs.push(checkbox);
+			return E('label', {}, [ checkbox, E('span', {}, [ choice.label ]) ]);
+		}).concat([
+			E('label', {}, [ customToggle, E('span', {}, [ options.customLabel || _('Custom…') ]) ])
+		]));
+	var node = E('div', { 'class': 'ikev2-choice-custom' }, [ list, customField ]);
+
+	function sync() {
+		customField.style.display = customToggle.checked ? '' : 'none';
+		customField.disabled = !customToggle.checked;
+	}
+
+	function setValue(next) {
+		var selected = String(next || '').trim().split(/\s+/).filter(Boolean);
+		var known = {};
+		inputs.forEach(function(checkbox) {
+			known[checkbox.value] = true;
+			checkbox.checked = selected.indexOf(checkbox.value) >= 0;
+		});
+		var custom = selected.filter(function(item) { return !known[item]; });
+		customField.value = custom.join(' ');
+		customToggle.checked = custom.length > 0 || !inputs.length;
+		sync();
+	}
+
+	customToggle.addEventListener('change', sync);
+	setValue(value);
+	return {
+		node: node,
+		value: function() {
+			var selected = inputs.filter(function(checkbox) { return checkbox.checked; })
+				.map(function(checkbox) { return checkbox.value; });
+			if (customToggle.checked)
+				selected = selected.concat(customField.value.trim().split(/\s+/).filter(Boolean));
+			return selected.filter(function(item, index) { return selected.indexOf(item) === index; }).join(' ');
+		},
+		setValue: setValue
+	};
+}
+
 // A labelled toggle row: title/description on the left, switch on the right.
 function toggleRow(input, title, sub) {
 	return E('div', { 'class': 'ikev2-toggle-row' }, [
@@ -2278,6 +2442,8 @@ return baseclass.extend({
 	switchLabel: switchLabel,
 	toggleRow: toggleRow,
 	netPick: netPick,
+	choiceWithCustom: choiceWithCustom,
+	multiChoiceWithCustom: multiChoiceWithCustom,
 		inlineResult: inlineResult,
 		inputToken: inputToken,
 	localizeNav: localizeNav,

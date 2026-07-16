@@ -147,16 +147,18 @@ function checkRows(doctor) {
 		crypto_acceleration: _('Crypto acceleration'),
 		flow_offloading: _('Flow offloading'),
 		resource_conflict: _('Reserved resource conflicts'),
+		upnp_ikev2_ports: _('UPnP reservation for IKEv2'),
 		firewall4: _('firewall4'),
 		dnsmasq_nftset: _('dnsmasq nftset support'),
 		dnsproxy: _('Encrypted DNS proxy'),
+		curl: _('HTTP client'),
 		sing_box: _('sing-box domain router'),
 		nft_tproxy: _('nftables TProxy support'),
-			pbr_service: _('PBR service'),
-			pbr_version: _('PBR version'),
-			failclosed_route: _('Fail-closed route'),
-			failclosed_ipv6_route: _('IPv6 fail-closed route'),
-			xfrm_module: _('XFRM interface module'),
+		pbr_service: _('PBR service'),
+		pbr_version: _('PBR version'),
+		failclosed_route: _('Fail-closed route'),
+		failclosed_ipv6_route: _('IPv6 fail-closed route'),
+		xfrm_module: _('XFRM interface module'),
 		xfrm_ifid_conflict: _('XFRM if_id conflict'),
 		xfrm_name_conflict: _('XFRM name conflict'),
 		swanctl: _('strongSwan swanctl'),
@@ -164,10 +166,10 @@ function checkRows(doctor) {
 		strongswan_kernel_netlink: _('strongSwan kernel-netlink'),
 		strongswan_vici: _('strongSwan VICI'),
 		strongswan_openssl: _('strongSwan OpenSSL'),
-			strongswan_eap_mschapv2: _('strongSwan EAP-MSCHAPv2'),
-			strongswan_eap_client_security: _('Outbound EAP security'),
-			strongswan_eap_server_security: _('Inbound strongSwan version'),
-			strongswan_x509: _('strongSwan X.509')
+		strongswan_eap_mschapv2: _('strongSwan EAP-MSCHAPv2'),
+		strongswan_eap_client_security: _('Outbound EAP security'),
+		strongswan_eap_server_security: _('Inbound strongSwan version'),
+		strongswan_x509: _('strongSwan X.509')
 	};
 	var rows = [];
 	Object.keys(labels).forEach(function(key) {
@@ -202,31 +204,62 @@ function rowPairs(rows) {
 }
 
 function dependencyGroups(rows) {
-	var preferred = [ 'openwrt', 'pbr_service', 'swanctl', 'sing_box' ];
-	var summary = [];
-
-	rows.filter(function(row) { return row.tone !== 'good'; }).forEach(function(row) {
-		if (summary.length < 4)
-			summary.push(row);
-	});
-	preferred.forEach(function(key) {
-		if (summary.length >= 4 || summary.some(function(row) { return row.key === key; }))
-			return;
-		var found = rows.find(function(row) { return row.key === key; });
-		if (found)
-			summary.push(found);
-	});
-	rows.forEach(function(row) {
-		if (summary.length < 4 && !summary.some(function(item) { return item.key === row.key; }))
-			summary.push(row);
-	});
-
-	return {
-		summary: summary,
-		details: rows.filter(function(row) {
-			return !summary.some(function(item) { return item.key === row.key; });
-		})
+	var targetPackages = {
+		sing_box: true,
+		nft_tproxy: true,
+		pbr_service: true,
+		pbr_version: true,
+		failclosed_route: true,
+		failclosed_ipv6_route: true,
+		xfrm_module: true,
+		swanctl: true,
+		swanmon: true,
+		strongswan_kernel_netlink: true,
+		strongswan_vici: true,
+		strongswan_openssl: true,
+		strongswan_eap_mschapv2: true,
+		strongswan_eap_client_security: true,
+		strongswan_eap_server_security: true,
+		strongswan_x509: true
 	};
+	var sharedPackages = {
+		firewall4: true,
+		dnsmasq_nftset: true,
+		dnsproxy: true,
+		curl: true
+	};
+	var groups = { system: [], target: [], shared: [] };
+
+	rows.forEach(function(row) {
+		if (targetPackages[row.key])
+			groups.target.push(row);
+		else if (sharedPackages[row.key])
+			groups.shared.push(row);
+		else
+			groups.system.push(row);
+	});
+	return groups;
+}
+
+function dependencyGroup(title, description, rows) {
+	var half = Math.ceil(rows.length / 2);
+	var hasIssue = rows.some(function(row) {
+		return row.tone === 'bad' || row.tone === 'warn';
+	});
+
+	return E('details', {
+		'class': 'ikev2-diagnostics',
+		'open': hasIssue ? '' : null
+	}, [
+		E('summary', {}, [ title ]),
+		E('div', { 'class': 'ikev2-diagnostics-body' }, [
+			E('p', { 'class': 'ikev2-panel-note' }, [ description ]),
+			E('div', { 'class': 'ikev2-two-col' }, [
+				common.keyValueTable(rowPairs(rows.slice(0, half))),
+				common.keyValueTable(rowPairs(rows.slice(half)))
+			])
+		])
+	]);
 }
 
 return view.extend({
@@ -348,7 +381,6 @@ return view.extend({
 		var netList = parseNetworks(data[2].stdout);
 		var depRows = checkRows(doctor);
 		var depGroups = dependencyGroups(depRows);
-		var detailHalf = Math.ceil(depGroups.details.length / 2);
 		var ready = doctor.doctor_ok === '1';
 
 		var enabled = input('checkbox', value.configured);
@@ -373,26 +405,16 @@ return view.extend({
 		function renderDependencyChecks() {
 			depRows = checkRows(doctor);
 			depGroups = dependencyGroups(depRows);
-			detailHalf = Math.ceil(depGroups.details.length / 2);
 			depsChecks.replaceChildren(
-				E('div', { 'class': 'ikev2-deps-summary' }, [
-					E('h4', {}, [ _('Key checks') ]),
-					E('div', { 'class': 'ikev2-two-col' }, [
-						common.keyValueTable(rowPairs(depGroups.summary.slice(0, 2))),
-						common.keyValueTable(rowPairs(depGroups.summary.slice(2)))
-					])
-				]),
-				E('details', { 'class': 'ikev2-diagnostics' }, [
-					E('summary', {}, [
-						_('Show %d more diagnostic checks').format(depGroups.details.length)
-					]),
-					E('div', { 'class': 'ikev2-diagnostics-body' }, [
-						E('div', { 'class': 'ikev2-two-col' }, [
-							common.keyValueTable(rowPairs(depGroups.details.slice(0, detailHalf))),
-							common.keyValueTable(rowPairs(depGroups.details.slice(detailHalf)))
-						])
-					])
-				])
+				dependencyGroup(_('System readiness'),
+					_('Firmware, feeds, storage, memory and reserved network resources.'),
+					depGroups.system),
+				dependencyGroup(_('Target VPN and routing packages'),
+					_('Components installed specifically for IKEv2, PBR and reliable domain routing.'),
+					depGroups.target),
+				dependencyGroup(_('Shared router packages'),
+					_('Components that OpenWrt or other apps may also use. Reset removes them only when this app installed them and no other package still needs them.'),
+					depGroups.shared)
 			);
 		}
 
@@ -403,7 +425,7 @@ return view.extend({
 			enabled.disabled = !ready;
 			save.disabled = !ready;
 			managedDescription.textContent = ready ?
-				_('Master switch: lets the app create and own the router routing, firewall and PBR. Off = the app only watches.') :
+				_('Master switch: lets the app create and own the router routing, firewall and PBR. Network and DNS changes are applied together by the button at the bottom.') :
 				_('Install the runtime dependencies below first — then this switch becomes available.');
 			var toggleSub = managedToggle.querySelector('.ikev2-toggle-sub');
 			if (toggleSub)
@@ -434,12 +456,7 @@ return view.extend({
 		}
 
 		// ── Network selectors ────────────────────────────────────────────
-		var protectedSet = {};
-		(value.source_interfaces || '').trim().split(/\s+/).filter(Boolean)
-			.forEach(function(n) { protectedSet[n] = true; });
-
-		var haveNets = netList.length > 0;
-		var wanField, protectedField, netCheckboxes = [];
+		var wanField, protectedField;
 
 		// The inbound VPN server is a selectable "network": when on, its clients
 		// (ipsec-in) follow the same domain policy as local networks.
@@ -448,36 +465,27 @@ return view.extend({
 				value.source_include_vpn !== '0')
 			: null;
 
-		if (haveNets) {
-			wanField = E('select', { 'class': 'cbi-input-select' }, netList.map(function(o) {
-				return E('option', {
-					'value': o.name,
-					'selected': o.name === value.wan_interface ? '' : null
-				}, [ o.name + ' — ' + o.cidr ]);
-			}));
-			protectedField = E('div', { 'class': 'ikev2-netpick-grid' },
-				netList.filter(function(o) { return o.name !== value.wan_interface; })
-					.map(function(o) {
-						var pick = common.netPick(o.name, o.name, o.cidr, !!protectedSet[o.name]);
-						netCheckboxes.push(pick.input);
-						return pick.node;
-					}).concat(vpnPick ? [ vpnPick.node ] : []));
-		}
-		else {
-			// Fallback when the network list is unavailable (e.g. ubus issue).
-			wanField = input('text', value.wan_interface, { 'placeholder': 'wan' });
-			protectedField = input('text', value.source_interfaces, { 'placeholder': 'lan iot' });
-		}
+		wanField = common.choiceWithCustom(value.wan_interface, netList.map(function(o) {
+			return { value: o.name, label: o.name + ' — ' + o.cidr };
+		}), { placeholder: 'wan' });
+		protectedField = common.multiChoiceWithCustom(value.source_interfaces,
+			netList.filter(function(o) { return o.name !== value.wan_interface; })
+				.map(function(o) { return { value: o.name, label: o.name + ' — ' + o.cidr }; }),
+			{ placeholder: 'lan iot' });
+		var protectedNode = E('div', { 'class': 'ikev2-choice-custom' }, [
+			vpnPick ? vpnPick.node : '',
+			protectedField.node
+		]);
 
 		save.addEventListener('click', function() {
-			var protectedVal = haveNets
-				? netCheckboxes.filter(function(c) { return c.checked; })
-					.map(function(c) { return c.value; }).join(' ')
-				: protectedField.value.trim();
+			var selectedWan = wanField.value();
+			var protectedVal = protectedField.value().split(/\s+/).filter(function(name) {
+				return name && name !== selectedWan;
+			}).join(' ');
 			var args = [
 				'set',
 				enabled.checked ? '1' : '0',
-				wanField.value.trim ? wanField.value.trim() : wanField.value,
+				selectedWan,
 				protectedVal,
 				dnsEnforce.checked ? '1' : '0',
 				blockDot.checked ? '1' : '0',
@@ -533,10 +541,6 @@ return view.extend({
 						])
 					]),
 					managedToggle,
-					E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:.9rem' }, [
-						applyResult.node,
-						save
-					]),
 					E('div', { 'class': 'ikev2-health-row', 'style': 'margin-top:1rem' }, [
 						E('span', { 'class': 'ikev2-health-copy' }, [
 							E('strong', {}, [ _('Domain routing engine') ]),
@@ -562,19 +566,19 @@ return view.extend({
 						E('div', { 'class': 'ikev2-form-grid' }, [
 							common.fieldLabel(_('WAN network'),
 								_('The internet uplink. Receives UDP 500/4500 when the inbound server is enabled.')),
-							wanField
+							wanField.node
 						]),
 						E('div', { 'style': 'margin-top:1.15rem' }, [
 							common.fieldLabel(_('Protected networks'),
 								_('Networks whose selected domains use the outbound tunnel.')),
-							E('div', { 'style': 'margin-top:.6rem' }, [ protectedField ])
+							E('div', { 'style': 'margin-top:.6rem' }, [ protectedNode ])
 						])
 					])),
 				common.section(_('Device exceptions'),
 					_('Force a device fully through the VPN (Full route) or fully past it (Exclude), regardless of the domain list.'),
 					self.renderExceptions(data[3].stdout)),
 				common.section(_('DNS policy'),
-					_('Domain routing is deterministic only when clients use the router resolver.'),
+					_('Domain routing is deterministic only when clients use the router resolver. These options take effect only after Apply.'),
 					E('div', {}, [
 						E('div', { 'class': 'ikev2-two-col' }, [
 							common.toggleRow(dnsEnforce, _('Redirect plain DNS'),
@@ -596,6 +600,10 @@ return view.extend({
 					])),
 				E('div', { 'class': 'ikev2-note warn' }, [
 					_('Browser DoH, Android Private DNS and Apple Private Relay cannot be transparently classified by a DNS-based domain policy.')
+				]),
+				E('div', { 'class': 'ikev2-actions end ikev2-save-bar' }, [
+					applyResult.node,
+					save
 				])
 			])
 		]);

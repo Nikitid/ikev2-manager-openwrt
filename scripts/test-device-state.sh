@@ -20,6 +20,10 @@ case "$command" in
 		case "${1:-}" in
 			ikev2-manager.domains.device_source) [ -s "$TEST_STATE/app" ] && cat "$TEST_STATE/app" ;;
 			pbr.ikev2pbr_domains.src_addr) cat "$TEST_STATE/pbr-src" ;;
+			firewall.@zone\[0\].name) printf '%s\n' lan ;;
+			firewall.@zone\[0\].network) printf '%s\n' 'lan iot' ;;
+			firewall.@zone\[1\].name) printf '%s\n' wan ;;
+			firewall.@zone\[1\].network) printf '%s\n' wan ;;
 			*) exit 1 ;;
 		esac
 		;;
@@ -46,7 +50,10 @@ case "$command" in
 		printf '%s\n' "${current:+$current }$value" >"$TEST_STATE/app"
 		;;
 	commit | reorder | set) ;;
-	show) ;;
+	show)
+		[ "${1:-}" = firewall ] && printf '%s\n' \
+			'firewall.@zone[0]=zone' 'firewall.@zone[1]=zone'
+		;;
 	*) exit 1 ;;
 esac
 EOF
@@ -72,6 +79,8 @@ run_device() {
 }
 
 run_device dump | grep -Fxq 'addr=192.168.1.50 mode=domain'
+run_device zones | grep -Fxq 'lan=lan iot'
+run_device zones | grep -Fxq 'wan=wan'
 run_device add-subnet 192.168.1.60
 [ "$(cat "$tmp/state/app")" = '192.168.1.50 192.168.1.60' ]
 run_device remove-subnet 192.168.1.50

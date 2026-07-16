@@ -183,6 +183,60 @@ validate_server_zone_names() {
 		die "Outbound firewall zone name '$outbound_zone' is already in use"
 }
 
+port_range_contains() {
+	range="$1"
+	port="$2"
+	case "$range" in
+		*-*) start="${range%%-*}"; end="${range#*-}" ;;
+		*:*) start="${range%%:*}"; end="${range#*:}" ;;
+		*) start="$range"; end="$range" ;;
+	esac
+	case "$start:$end:$port" in
+		*[!0-9:]* | ::*) return 1 ;;
+	esac
+	[ "$port" -ge "$start" ] && [ "$port" -le "$end" ]
+}
+
+upnp_port_action() {
+	wanted="$1"
+	index=0
+	while uci -q get "upnpd.@perm_rule[$index]" >/dev/null 2>&1; do
+		action="$(uci -q get "upnpd.@perm_rule[$index].action" 2>/dev/null || echo deny)"
+		ranges="$(uci -q get "upnpd.@perm_rule[$index].ext_ports" 2>/dev/null || true)"
+		for range in $ranges; do
+			if port_range_contains "$range" "$wanted"; then
+				printf '%s\n' "$action"
+				return 0
+			fi
+		done
+		index=$((index + 1))
+	done
+	printf 'deny\n'
+}
+
+upnp_ikev2_check() {
+	if [ "$(uci -q get upnpd.config.enabled 2>/dev/null || echo 0)" != 1 ]; then
+		printf 'upnp_ikev2_ports=ok:not-enabled\n'
+		return 0
+	fi
+	upnp_rules="$(nft list chain inet fw4 upnp_prerouting 2>/dev/null || true)"
+	if printf '%s\n' "$upnp_rules" | grep 'udp dport' |
+		grep -Eq '(^|[^0-9])(500|4500)([^0-9]|$)'; then
+		printf 'upnp_ikev2_ports=conflict:active-UDP-500-or-4500-mapping\n'
+		return 1
+	fi
+	available=''
+	for port in 500 4500; do
+		[ "$(upnp_port_action "$port")" != allow ] ||
+			available="${available}${available:+,}$port"
+	done
+	if [ -n "$available" ]; then
+		printf 'upnp_ikev2_ports=warn:UDP-%s-available-to-UPnP\n' "$available"
+	else
+		printf 'upnp_ikev2_ports=ok:UDP-500-and-4500-reserved\n'
+	fi
+}
+
 compatibility_checks() {
 	release_id='unknown'
 	release='unknown'
@@ -399,6 +453,7 @@ doctor() {
 	}
 
 	compatibility_checks
+	upnp_ikev2_check || ok=0
 
 	check_command firewall4 fw4
 	check_command ip_full ip
@@ -2484,6 +2539,9 @@ case "${1:-}" in
 	strongswan-security)
 		[ "$#" -eq 2 ] || die 'Expected: strongswan-security client|server'
 		strongswan_security_check "$2"
+		;;
+	_upnp-check)
+		upnp_ikev2_check
 		;;
 	access-apply)
 		zone="$(defaultv server firewall_zone ikev2in)"

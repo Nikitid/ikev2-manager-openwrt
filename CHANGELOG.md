@@ -2,7 +2,21 @@
 
 This project follows semantic versioning for the application and release tags.
 
-## Unreleased
+## 1.1.2 - 2026-07-16
+
+- Replaced predictable free-text network, firewall-zone, address-plan, MTU,
+  timer and certificate-path values with detected or safe presets. Every
+  picker keeps a final custom option and preserves unknown existing values.
+- Added an explicit inbound-server option to allow every router port. It
+  disables the restricted-port field and makes restricted mode require a
+  non-empty full allowlist with a management lockout warning.
+- Added a readiness diagnostic for active or permitted UPnP mappings that can
+  collide with the inbound IKEv2 server on UDP 500/4500.
+- Split Overview readiness diagnostics into system checks, target VPN/routing
+  packages and shared router packages, with reset ownership explained inline.
+- Moved the Overview Apply action below the network and DNS controls so one
+  explicit submission applies managed mode, protected networks and both DNS
+  policy options together.
 
 ## 1.1.1 - 2026-07-16
 

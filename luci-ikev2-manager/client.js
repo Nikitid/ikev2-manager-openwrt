@@ -367,11 +367,22 @@ return view.extend({
 				'placeholder': _('Leave blank to keep the current password'),
 				'autocomplete': 'new-password'
 		});
-		var dpd = input('number', value.dpd, { 'min': '10', 'max': '300' });
-		var mtu = input('number', value.mtu, { 'min': '1280', 'max': '1500' });
-		var reconnectCooldown = input('number', value.reconnect_cooldown || '15', {
-			'min': '15', 'max': '300'
-		});
+		var dpd = common.choiceWithCustom(value.dpd, [
+			{ value: '30', label: '30 ' + _('seconds') + ' — ' + _('recommended') },
+			{ value: '60', label: '60 ' + _('seconds') },
+			{ value: '120', label: '120 ' + _('seconds') }
+		], { type: 'number', attrs: { 'min': '10', 'max': '300' } });
+		var mtu = common.choiceWithCustom(value.mtu, [
+			{ value: '1400', label: '1400 — ' + _('recommended') },
+			{ value: '1360', label: '1360 — ' + _('constrained networks') },
+			{ value: '1280', label: '1280 — ' + _('minimum') },
+			{ value: '1500', label: '1500 — ' + _('no reduction') }
+		], { type: 'number', attrs: { 'min': '1280', 'max': '1500' } });
+		var reconnectCooldown = common.choiceWithCustom(value.reconnect_cooldown || '15', [
+			{ value: '15', label: '15 ' + _('seconds') + ' — ' + _('recommended') },
+			{ value: '30', label: '30 ' + _('seconds') },
+			{ value: '60', label: '60 ' + _('seconds') }
+		], { type: 'number', attrs: { 'min': '15', 'max': '300' } });
 		var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, [
 			_('Save and connect')
 		]);
@@ -447,10 +458,10 @@ return view.extend({
 				address.value.trim(),
 				remoteId.value.trim(),
 				username.value.trim(),
-				dpd.value,
-				mtu.value,
+				dpd.value(),
+				mtu.value(),
 				password.value,
-				reconnectCooldown.value
+				reconnectCooldown.value()
 			].join('\n') + '\n';
 				return fs.write('/var/run/ikev2-manager-client-' + token + '.in', payload, 384 /* 0600 */)
 					.then(function() { return token; });
@@ -717,13 +728,13 @@ return view.extend({
 							E('div', { 'class': 'ikev2-form-grid' }, [
 								common.fieldLabel(_('DPD interval'),
 									_('Dead peer detection in seconds.')),
-								dpd,
+								dpd.node,
 								common.fieldLabel(_('XFRM MTU'),
 									_('Keep 1400 unless PMTU diagnostics show a problem.')),
-								mtu,
+								mtu.node,
 								common.fieldLabel(_('Reconnect cooldown'),
 									_('Minimum delay between automatic connection attempts, in seconds.')),
-								reconnectCooldown
+								reconnectCooldown.node
 							])
 						]),
 						E('div', { 'class': 'ikev2-actions bar' }, [ connectResult.node, reconnect, saveOnly, save ])

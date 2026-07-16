@@ -1188,6 +1188,21 @@ acme_emit() {
 		printf '%s ' "${b%.sh}"
 	done
 	printf '\n'
+	printf 'identities='
+	identity_candidates=''
+	for section_name in $(uci show acme 2>/dev/null \
+		| sed -n 's/^acme\.\([^.=]*\)=cert$/\1/p'); do
+		[ "$(uci -q get "acme.$section_name.enabled" 2>/dev/null || echo 0)" = 1 ] || continue
+		for domain in $(uci -q get "acme.$section_name.domains" 2>/dev/null || true); do
+			case "$domain" in \*.*|'') continue ;; esac
+			case " $identity_candidates " in *" $domain "*) continue ;; esac
+			if valid_host "$domain"; then
+				printf '%s ' "$domain"
+				identity_candidates="${identity_candidates:+$identity_candidates }$domain"
+			fi
+		done
+	done
+	printf '\n'
 	cert="$(acme_server_cert_path)"
 	if [ -n "$identity" ] && [ -s "$cert" ]; then
 		printf 'cert_present=1\n'
