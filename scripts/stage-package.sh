@@ -32,6 +32,7 @@ install_file 755 ikev2-manager-runtime/90-ikev2-wan /etc/hotplug.d/iface/90-ikev
 install_file 755 ikev2-manager-runtime/90-ikev2-acme /etc/hotplug.d/acme/90-ikev2-manager
 install_file 600 ikev2-manager-runtime/20-router-xfrm.conf /etc/strongswan.d/charon/20-ikev2-manager.conf
 install_file 644 openwrt/files/etc/ikev2-manager/README /etc/ikev2-manager/README
+install_file 600 openwrt/files/etc/config/ikev2-manager /usr/share/ikev2-manager/defaults/ikev2-manager
 install_file 600 openwrt/files/etc/pbr-ikev2-domains.manual.txt /etc/pbr-ikev2-domains.manual.txt
 install_file 600 openwrt/files/etc/pbr-ikev2-addresses.manual.txt /etc/pbr-ikev2-addresses.manual.txt
 install_file 644 openwrt/files/lib/upgrade/keep.d/ikev2-manager /lib/upgrade/keep.d/ikev2-manager

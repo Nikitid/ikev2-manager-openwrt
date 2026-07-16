@@ -35,7 +35,8 @@ start() {
 				/etc/init.d/dnsmasq reload >/dev/null 2>&1
 		fi
 	else
-		ip link del ipsec-in 2>/dev/null || true
+		ip -4 addr flush dev ipsec-in scope global 2>/dev/null || true
+		ip link set ipsec-in down 2>/dev/null || true
 	fi
 
 	# IPv4-only tunnel: when the router has no IPv6 uplink, make global IPv6 fail
@@ -48,6 +49,8 @@ start() {
 }
 
 stop() {
-	ip link del ipsec-in 2>/dev/null || true
-	ip link del ipsec-out 2>/dev/null || true
+	# Deleting an XFRM link can block in kernel D-state on OpenWrt 25. A down
+	# link is inert and disappears when the module unloads or the router reboots.
+	ip link set ipsec-in down 2>/dev/null || true
+	ip link set ipsec-out down 2>/dev/null || true
 }

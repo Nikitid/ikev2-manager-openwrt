@@ -10,9 +10,7 @@ set -eu
 # credentials, certificates and custom destination lists.
 [ "${PKG_UPGRADE:-0}" = 1 ] && exit 0
 case "${1:-}" in
-	remove | '') ;;
 	upgrade) exit 0 ;;
-	*) exit 0 ;;
 esac
 
 fail() {
@@ -27,6 +25,8 @@ fail() {
 
 swanctl --terminate --ike proxy-out --timeout 3 >/dev/null 2>&1 || true
 swanctl --terminate --ike ikev2-in --timeout 3 >/dev/null 2>&1 || true
+swanctl --unload-conn proxy-out >/dev/null 2>&1 || true
+swanctl --unload-conn ikev2-in >/dev/null 2>&1 || true
 rm -f /etc/swanctl/conf.d/20-proxy-out.conf
 rm -f /etc/swanctl/conf.d/30-inbound.conf
 rm -f /etc/swanctl/conf.d/90-proxy-out-secret.conf

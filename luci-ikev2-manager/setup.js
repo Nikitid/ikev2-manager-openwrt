@@ -359,7 +359,7 @@ return view.extend({
 		var installDeps = E('button', { 'class': 'cbi-button cbi-button-action' }, [
 			_('Install runtime dependencies') ]);
 		var removeDeps = E('button', { 'class': 'cbi-button cbi-button-remove' }, [
-			_('Remove runtime dependencies') ]);
+			_('Reset app and remove dependencies') ]);
 		var domainRuntime = domainRuntimeStatus(value);
 		var headerPill = common.pill('', 'neutral');
 		var managedDescription = E('p', {});
@@ -511,10 +511,10 @@ return view.extend({
 		});
 
 		removeDeps.addEventListener('click', function() {
-			if (!window.confirm(_('Restore the router state from before dependency installation? The VPN and managed routing stop. Only packages recorded as installed by this app are removed, and the previous DNS/DHCP state is restored.')))
+			if (!window.confirm(_('Reset the app and prepare it for removal? All app functions stop; its settings, users, secrets, generated files and app-owned dependencies are removed. Pre-install DNS/DHCP is restored. Shared packages required by other software are kept.')))
 				return;
 			runDepsJob(removeDeps, 'remove-deps', depsResult,
-				_('Runtime dependencies removed.'), refreshSetupState);
+				_('Application reset completed.'), refreshSetupState);
 		});
 
 		updateSetupState();
@@ -546,7 +546,7 @@ return view.extend({
 					])
 				]),
 				common.section(_('Runtime dependencies'),
-					_('This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. Remove restores the DNS/DHCP configuration and deletes only packages this app recorded as newly installed. VPN and routing stay disabled until managed mode is enabled.'),
+					_('This installs PBR, strongSwan, sing-box, dnsmasq-full, dnsproxy and XFRM/TProxy packages. Reset stops every app function, restores pre-install DNS/DHCP, removes app-owned packages and clears app settings and secrets. Shared packages used by other software stay installed. Use Reset before uninstalling the app for a clean removal; removing only the package in Software preserves configuration and dependencies for reinstall or upgrade.'),
 					E('div', {}, [
 						depsChecks,
 						E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1rem' }, [

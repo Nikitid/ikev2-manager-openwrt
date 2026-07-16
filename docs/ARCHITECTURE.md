@@ -41,6 +41,12 @@ strongSwan does not install routes into the main table. The runtime owns the
 XFRM interfaces, synchronizes virtual addresses and lets PBR own route
 selection.
 
+Shutdown removes live PBR and firewall references before bringing XFRM links
+down. Runtime and package cleanup do not require `ip link del`: deleting an
+XFRM link can block in kernel D-state on the validated OpenWrt 25 kernel. Down
+links cannot forward and are discarded when the module unloads or the router
+reboots.
+
 ## DNS
 
 `dnsmasq-full` remains the resolver for LAN and inbound VPN clients:
@@ -59,6 +65,12 @@ and DNSCrypt. Multiple primary resolvers can use load balancing, parallel
 queries or fastest-address selection. Bootstrap and fallback resolvers are
 managed independently. Standard DoH is the default; HTTP/3 and DoQ remain
 experimental. Resolver changes are validated and rolled back on failure.
+
+Before the first managed-DNS change, the runtime records the existing
+`dnsproxy`, `dnsmasq` and service state. Reliable mode temporarily points
+dnsmasq at `127.0.0.42`; that application-owned endpoint is never accepted as
+an original upstream. Legacy snapshots containing it are repaired only from a
+saved pre-FakeIP upstream or an already-running saved loopback dnsproxy.
 
 ## Destination lifecycle
 
@@ -94,6 +106,17 @@ The health service checks:
 - inbound server configuration drift.
 
 Repairs are serialized and avoid restarting WAN or the router.
+
+All mutating LuCI actions use detached workers with per-action status files and
+a shared router-action lock. A second action fails promptly instead of queuing
+for minutes. UI pages poll the action ID and reload the affected model data in
+place after completion.
+
+Dependency installation records the package baseline, DNS provider and every
+package added by the transaction. A full dependency reset removes only that
+owned set. Package-manager solver dependencies used by other applications are
+retained. Package removal itself has a narrower lifecycle contract and
+preserves user configuration.
 
 ## Inbound server
 

@@ -1,46 +1,52 @@
-# OpenWrt 25.12/apk Port
+# OpenWrt 25.12 and apk
 
-This branch is the OpenWrt 25.12/apk compatibility line. The stable release
-line remains `main` until the 25.12 path is built as an APK and validated on a
-real router target.
+The `main` branch builds one application source tree for both supported package
+manager lines:
 
-## Branch Model
+- OpenWrt `24.10.x` with `opkg` and IPK packages;
+- OpenWrt `25.12.x` with apk-tools 3 and APK packages.
 
-- `main`: stable OpenWrt 24.10/opkg releases.
-- `openwrt-25-apk`: OpenWrt 25.12/apk porting and validation.
-- Merge back to `main` only after the 24.10 IPK path and the 25.12 APK path are
-  both covered by local checks and router validation.
+A permanent platform branch is not required. Package-manager differences are
+kept behind the runtime package abstraction and release builders; changes are
+merged only after the IPK checks and the target-specific APK build pass.
 
-## Compatibility Policy
+## Compatibility boundary
 
-The runtime accepts only these release/package-manager pairs:
+The runtime accepts only official release builds with firewall4 and matching
+official feeds. Vendor firmware, snapshots, firewall3, a mismatched package
+manager and non-release feeds fail before dependency installation.
 
-- OpenWrt `24.10.x` with `opkg`;
-- OpenWrt `25.12.x` with `apk`.
+APK artifacts contain a target-specific architecture and are coupled to the
+OpenWrt kernel ABI through their kmod dependencies. Build and publish one APK
+feed for every validated target/architecture and OpenWrt 25.12 release. A minor
+OpenWrt update normally needs a rebuild and smoke test when its kernel ABI or
+package indexes change; LuCI and shell code do not need a separate fork.
 
-Other versions, vendor firmware, snapshots, mismatched package managers and
-non-release package feeds fail before dependency installation.
+The currently validated OpenWrt 25 target is:
 
-## Current Scope
+- OpenWrt `25.12.5`;
+- `mediatek/filogic`;
+- `aarch64_cortex-a53`;
+- GL.iNet Flint 2 running official OpenWrt.
 
-Implemented in this branch:
+Other targets remain unsupported until the same SDK build, dependency-plan and
+router validation sequence succeeds for their exact package feeds and kernel
+ABI.
 
-- package-manager abstraction for `opkg` and `apk` runtime operations;
-- preflight checks for OpenWrt 25.12 release feeds;
-- dependency installation/removal flow prepared for `apk`;
-- LuCI package-installed detection for `apk` systems;
-- apk-tools 3 installed-version queries and exact dnsmasq provider detection;
-- trusted-feed dnsmasq-full replacement with apk solver rollback;
+## Implemented support
+
+- package-manager abstraction for `opkg` and apk-tools 3;
+- release/feed and persistent-storage preflight checks;
+- exact installed-version and dnsmasq-provider detection;
+- trusted-feed `dnsmasq-full` replacement with solver-backed rollback;
+- application-owned package tracking and baseline restoration;
+- retention of packages still required by unrelated software;
 - exact dnsmasq nftset capability validation;
 - reproducible APK builds with the official OpenWrt 25.12 SDK;
-- a project-owned P-256 release key, signed APKs and signed `packages.adb`;
-- a rollback-safe bootstrap installer for the GitHub Release APK feed.
-
-Still required before treating 25.12 as supported:
-
-- run `preflight`, dependency installation, `doctor`, apply/disable/remove on
-  the real router target;
-- confirm target-specific kmods exist for the router kernel ABI.
+- a project P-256 release key, signed APKs and signed `packages.adb` indexes;
+- a rollback-safe one-time bootstrap for the GitHub Release feed;
+- live validation of preflight, install, doctor, managed enable/disable,
+  Reliable mode, PBR rebuild, DNS rollback and guarded dependency removal.
 
 ## Signed feed
 
@@ -52,16 +58,32 @@ wget -O /tmp/install-ikev2-manager.sh \
 sh /tmp/install-ikev2-manager.sh
 ```
 
-The script accepts only official OpenWrt 25.12 on the currently validated
-`mediatek/filogic` and `aarch64_cortex-a53` target, verifies the release
-public key checksum, installs the key under `/etc/apk/keys/`, registers the
-signed GitHub Release feed, refreshes indexes, simulates the transaction and
-only then installs the package. Failed bootstrap attempts restore the previous
-key/feed configuration.
+The script checks the exact OpenWrt release and target, verifies the release
+public-key checksum, installs the key under `/etc/apk/keys/`, registers the
+signed GitHub Release feed, refreshes indexes and simulates the package
+transaction before installation. A failed bootstrap restores the previous
+key/feed state.
 
-Later package updates use the normal package manager:
+Later updates use the normal package manager:
 
 ```sh
 apk update
 apk upgrade luci-app-ikev2-manager
 ```
+
+Direct LuCI upload of an APK signed only by an unknown project key fails with
+`UNTRUSTED signature`. The one-time bootstrap is therefore required before
+LuCI or `apk` can install and update project packages normally.
+
+## Release validation
+
+For every OpenWrt 25.12 update or newly supported target:
+
+1. build the APK and signed index with the exact official SDK;
+2. verify architecture, SDK identity, signatures and deterministic output;
+3. run bootstrap and dependency-plan simulation against current feeds;
+4. run `preflight`, dependency installation and `doctor` on the target;
+5. test DNS apply/rollback, managed enable/disable, Reliable mode and PBR
+   rebuild;
+6. test full dependency reset and confirm ordinary WAN/DNS remains available;
+7. reboot once and repeat `doctor` plus inbound/outbound smoke tests.

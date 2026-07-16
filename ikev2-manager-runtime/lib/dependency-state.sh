@@ -214,6 +214,7 @@ deps_state_remaining() {
 
 deps_state_restore() {
 	local provider owned restore_provider current_provider packages
+	deps_state_retained=''
 	# Restore is also valid while an installation is in progress. This is the
 	# state in which every installer failure and interrupted retry must roll back.
 	deps_state_captured || return 1
@@ -246,7 +247,11 @@ deps_state_restore() {
 		/etc/init.d/dnsmasq restart >/dev/null 2>&1 || return 1
 	fi
 
-	[ -z "$(deps_state_remaining)" ] || return 1
+	# A package installed by this app may have become a dependency of another
+	# application in the meantime. A successful package-manager transaction is
+	# authoritative: keep such shared packages instead of treating the safe
+	# solver decision as a failed rollback.
+	deps_state_retained="$(deps_state_remaining || true)"
 	if [ "$restore_provider" = 1 ]; then
 		pkg_installed "$provider" || return 1
 	fi

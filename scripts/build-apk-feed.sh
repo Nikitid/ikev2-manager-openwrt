@@ -28,7 +28,7 @@ case "$(basename "$sdk")" in
 	*) fail "unexpected SDK directory: $(basename "$sdk")" ;;
 esac
 
-for command in make openssl rsync sha256sum; do
+for command in make openssl python3 rsync sha256sum; do
 	command -v "$command" >/dev/null 2>&1 || fail "required command is missing: $command"
 done
 
@@ -97,15 +97,25 @@ grep -q "${PKG_NAME}" "$tmp/packages.json" ||
 	fail 'generated index does not contain the package'
 "$apk_tool" --keys-dir "$root/keys" adbdump --format json \
 	"$output/$package_name" >"$tmp/package.json"
-grep -Fq '"pre-deinstall":' "$tmp/package.json" &&
-grep -Fq 'PKG_UPGRADE:-0' "$tmp/package.json" &&
-grep -Fq "remove | '')" "$tmp/package.json" &&
+python3 - "$tmp/package.json" >"$tmp/pre-deinstall" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as package_file:
+    package = json.load(package_file)
+print(package.get("scripts", {}).get("pre-deinstall", ""), end="")
+PY
+grep -Fq 'PKG_UPGRADE:-0' "$tmp/pre-deinstall" &&
+grep -Fq 'upgrade) exit 0' "$tmp/pre-deinstall" &&
 grep -Fq 'cleanup helper is missing; package removal stopped before changing files' \
-	"$tmp/package.json" &&
+	"$tmp/pre-deinstall" &&
 grep -Fq 'unable to restore managed router state; package removal stopped before changing files' \
-	"$tmp/package.json" ||
+	"$tmp/pre-deinstall" ||
 	fail 'built APK does not contain the guarded removal cleanup'
-if grep -Fq '/etc/init.d/rpcd restart' "$tmp/package.json"; then
+if grep -Fq '*) exit 0' "$tmp/pre-deinstall"; then
+	fail 'built APK pre-deinstall rejects the apk old-version argument'
+fi
+if grep -Fq '/etc/init.d/rpcd restart' "$tmp/pre-deinstall"; then
 	fail 'built APK restarts rpcd during its package transaction'
 fi
 

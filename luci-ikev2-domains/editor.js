@@ -195,11 +195,13 @@ function parseStatus(text) {
 // Poll the status file until its `updated` timestamp differs from `prev`
 // (meaning our apply run finished) or the deadline passes. Resolves with the
 // parsed status object, or null on timeout.
-function pollStatus(actionId, deadline) {
+function pollStatus(actionId, deadline, onProgress) {
 	return L.resolveDefault(fs.exec(communityHelper, [ 'status', actionId ]), {
 		stdout: ''
 	}).then(function(response) {
 		var st = parseStatus((response && response.stdout) || '');
+		if (st.action_id === actionId && st.state === 'running' && onProgress)
+			onProgress(st);
 		if (st.action_id === actionId && (st.state === 'ok' || st.state === 'error'))
 			return st;
 		if (Date.now() >= deadline)
@@ -207,7 +209,7 @@ function pollStatus(actionId, deadline) {
 		return new Promise(function(resolve) {
 			window.setTimeout(resolve, 1500);
 		}).then(function() {
-			return pollStatus(actionId, deadline);
+			return pollStatus(actionId, deadline, onProgress);
 		});
 	});
 }
@@ -315,7 +317,10 @@ return view.extend({
 						var actionId = parseStatus(response.stdout || '').action_id;
 						if (!actionId)
 							throw new Error(_('Action did not start'));
-						return pollStatus(actionId, Date.now() + 60000);
+						return pollStatus(actionId, Date.now() + 120000, function(st) {
+							if (st.message)
+								result.busy(_(st.message));
+						});
 					});
 				})
 				.then(function(st) {

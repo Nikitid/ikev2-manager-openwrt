@@ -86,6 +86,7 @@ Long LuCI operations continue in serialized workers:
 ```sh
 /usr/libexec/ikev2-manager action-status
 /usr/libexec/ikev2-manager-system action-status
+/usr/libexec/ikev2-manager-system deps-status
 ```
 
 Logs:
@@ -97,7 +98,28 @@ Logs:
 /tmp/ikev2-domains-pbr-restart.log
 ```
 
-A browser timeout does not cancel the router-side operation.
+Each worker publishes an action ID, state, update time and current phase. The
+terminal states are `ok` and `error`. LuCI polls the worker and refreshes the
+affected counters, lists and runtime state without a page reload.
+
+Router-changing actions share one lock. A competing action is rejected after a
+short wait instead of remaining queued behind an unknown operation. A browser
+timeout does not cancel an already running router-side worker.
+
+Observed times on the validated `mediatek/filogic` router are approximately
+1 second for an unchanged managed setup, 2 seconds for an unchanged policy,
+5-7 seconds for Reliable-mode or managed-mode disable, 12 seconds for a policy
+restart or full dependency reset, 17-27 seconds for a full managed enable and
+31 seconds for dependency installation with current package indexes. Feed
+refreshes, downloads and ACME issuance can take longer. Treat an unchanged
+phase for more than two minutes as a fault and inspect the status, logs and
+process state before retrying the action.
+
+Policy-list rebuild phases are preparation, optional service-list download,
+combined-list generation and PBR restart. The PBR restart is normally the
+longest phase and can take tens of seconds. Saving an unchanged managed setup
+or unchanged policy list returns after a live health check instead of restarting
+PBR; a failed health check automatically falls back to the full apply path.
 
 ## Certificates
 
@@ -130,12 +152,40 @@ Recovery sequence:
 5. verify one selected and one ordinary destination;
 6. enable the inbound server only after certificate validation.
 
+## Dependency reset and package removal
+
+The Overview action that removes runtime dependencies is a full application
+reset. It first restores the DNS/DHCP state captured before dependency
+installation, disables managed routing, then asks the package manager to remove
+only packages recorded as application-owned. Packages that another installed
+application still requires are retained and reported as shared.
+
+After a successful package transaction, the reset restores the packaged
+default configuration and removes application users, submitted client secrets,
+generated strongSwan profiles, copied certificate material, generated policy
+lists, caches and the application's ACME section. External certificate source
+files and unrelated ACME accounts are not deleted because ownership cannot be
+proven safely.
+
+Original DNS restoration is validated before any package is removed. A legacy
+snapshot containing the application FakeIP resolver `127.0.0.42` is repaired
+only from the domain router's saved upstream or from the saved configuration of
+a dnsproxy service that was already running before management began. If neither
+source is available, the reset stops and keeps the working managed DNS state.
+
+XFRM interfaces are brought down after live PBR, firewall and strongSwan
+references are removed. They are not forcibly deleted during a live cleanup:
+on affected OpenWrt 25 kernels, `ip link del` can block in kernel D-state. A
+down interface has no forwarding path and disappears when its package/module
+is unloaded or at the next reboot.
+
 Removing the package disables managed mode first and removes generated runtime
 state, including rendered strongSwan profiles and copied certificate material.
 Package-owned files are removed by the active package manager. User
-configuration, credentials, source certificates, custom destination lists, cached service lists and
-sysupgrade backups are preserved. If managed mode is still enabled and cleanup
-cannot run, package removal stops before files are changed.
+configuration, credentials, source certificates, custom destination lists,
+cached service lists and sysupgrade backups are preserved. This is intentionally
+different from the full dependency-reset action. If managed mode is still
+enabled and cleanup cannot run, package removal stops before files are changed.
 
 OpenWrt 24.10:
 

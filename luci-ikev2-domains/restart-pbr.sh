@@ -57,6 +57,18 @@ drop_reclassified_connections() {
 	fi
 }
 
+check_runtime() {
+	[ "$(uci -q get ikev2-manager.globals.configured 2>/dev/null || echo 0)" = 1 ] ||
+		return 1
+	"$pbr_init" running >/dev/null 2>&1 || return 1
+	router_dns_ready 127.0.0.1 openwrt.org || return 1
+	"$system_helper" failclosed-check >/dev/null 2>&1 || return 1
+	forward_chain_ok || return 1
+	if [ "$(uci -q get ikev2-manager.domains.engine 2>/dev/null || true)" = fakeip ]; then
+		"$domain_router_helper" status 2>/dev/null | grep -q '^healthy=yes$' || return 1
+	fi
+}
+
 perform_restart() {
 	"$system_helper" _sync-pbr || return 1
 	if [ "$(uci -q get ikev2-manager.domains.engine 2>/dev/null || true)" = fakeip ] &&
@@ -121,6 +133,9 @@ schedule_restart() {
 }
 
 case "${1:-}" in
+	--check)
+		check_runtime
+		;;
 	--wait)
 		if [ "${2:-}" = --lock-held ]; then
 			run_restart 1
@@ -136,7 +151,7 @@ case "${1:-}" in
 		schedule_restart
 		;;
 	*)
-		printf 'usage: %s [--wait [--lock-held]]\n' "$0" >&2
+		printf 'usage: %s [--check|--wait [--lock-held]]\n' "$0" >&2
 		exit 2
 		;;
 esac

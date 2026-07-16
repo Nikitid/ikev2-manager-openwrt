@@ -56,6 +56,10 @@ acquire_action_lock() {
 	owner="$1"
 	id="$2"
 	tries=0
+	max_tries="${IKEV2_ACTION_LOCK_WAIT_SECONDS:-5}"
+	case "$max_tries" in
+		'' | *[!0-9]*) max_tries=5 ;;
+	esac
 	while ! mkdir "$action_lock_dir" 2>/dev/null; do
 		updated="$(sed -n 's/^updated=//p' "$action_lock_status" 2>/dev/null | tail -1)"
 		pid="$(sed -n 's/^pid=//p' "$action_lock_status" 2>/dev/null | tail -1)"
@@ -74,7 +78,7 @@ acquire_action_lock() {
 			continue
 		fi
 		tries=$((tries + 1))
-		[ "$tries" -lt 180 ] || return 1
+		[ "$tries" -lt "$max_tries" ] || return 1
 		sleep 1
 	done
 	lock_status_tmp="${action_lock_status}.new.$$"

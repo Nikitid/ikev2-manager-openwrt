@@ -25,6 +25,19 @@ pkg_added_since() {
 pkg_installed() {
 	case " $installed " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
+pkg_remove_runtime() {
+	local next package remove
+	next=''
+	for package in $installed; do
+		remove=0
+		for target in "$@"; do
+			[ "$package" != "$target" ] || remove=1
+		done
+		[ "$package" = shared-package ] && remove=0
+		[ "$remove" = 1 ] || next="${next}${next:+ }$package"
+	done
+	installed="$next"
+}
 runtime_packages() { printf '%s\n' pbr strongswan; }
 
 IKEV2_DEPS_STATE_DIR="$tmp/state"
@@ -101,6 +114,26 @@ deps_state_ready
 deps_state_upgrade_v1
 [ "$(deps_state_version)" = 3 ]
 [ "$(cat "$(deps_state_file owned-packages)")" = strongswan ]
+
+# The package manager may retain an app-installed package after another
+# application starts depending on it. That is a safe restore, not a failure.
+cat >"$(deps_state_file metadata)" <<'EOF'
+version=3
+state=installed
+dns_provider=dnsmasq
+manager=test
+release=25.12.5
+target=mediatek/filogic
+EOF
+printf 'app-only\nshared-package\n' >"$(deps_state_file owned-packages)"
+installed='base-files dnsmasq libc app-only shared-package'
+deps_state_restore
+[ "$deps_state_retained" = shared-package ]
+if pkg_installed app-only; then
+	printf '%s\n' 'application-only package survived dependency restore' >&2
+	exit 1
+fi
+pkg_installed shared-package
 
 sed 's/^version=3$/version=2/' "$(deps_state_file metadata)" >"$(deps_state_file metadata).new"
 mv "$(deps_state_file metadata).new" "$(deps_state_file metadata)"

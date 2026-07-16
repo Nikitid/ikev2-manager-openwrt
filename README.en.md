@@ -49,7 +49,7 @@ Compatibility is checked by capabilities rather than by a router whitelist.
 
 ### OpenWrt 24.10
 
-Download `luci-app-ikev2-manager_1.0.10_all.ipk` from
+Download `luci-app-ikev2-manager_1.1.1_all.ipk` from
 [Releases](https://github.com/Nikitid/ikev2-manager-openwrt/releases) and upload
 it through:
 
@@ -150,6 +150,10 @@ See [NOTICE](NOTICE).
 - selected traffic uses an unreachable fallback route when IKEv2 is down;
 - DNS, routing and service-list updates have validation and rollback;
 - long LuCI actions are serialized and report their actual status;
+- a competing action is rejected promptly, while lists and status refresh in
+  place without a manual page reload;
+- full dependency reset validates DNS restoration first, removes only packages
+  installed by the application and retains shared packages used elsewhere;
 - submitted VPN and ACME secrets use permission-restricted temporary files;
 - backups contain credentials and private keys and must be stored as secrets.
 

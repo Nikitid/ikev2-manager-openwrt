@@ -604,6 +604,8 @@ cleanup_dnsmasq_transaction() {
 }
 
 deps_status_file='/tmp/ikev2-manager-deps.status'
+default_app_config="${IKEV2_DEFAULT_APP_CONFIG:-/usr/share/ikev2-manager/defaults/ikev2-manager}"
+routing_check_helper="${IKEV2_ROUTING_CHECK_HELPER:-/usr/libexec/ikev2-domains-restart}"
 action_status_file='/var/run/ikev2-system-action.status'
 action_status_dir='/var/run/ikev2-system-actions'
 action_lock_dir='/var/run/ikev2-action.lock'
@@ -641,7 +643,7 @@ run_install_deps() {
 	exec >>/tmp/ikev2-manager-deps.log 2>&1
 	deps_status running 'Waiting for other router actions...'
 	if ! acquire_action_lock dependencies "$DEPS_ACTION_ID"; then
-		deps_status error 'Timed out waiting for another router action.'
+		deps_status error 'Another router action is still running.'
 		return 1
 	fi
 	trap 'rm -f "$action_lock_status"; rmdir "$action_lock_dir" 2>/dev/null || true' EXIT INT TERM
@@ -897,7 +899,7 @@ run_remove_deps() {
 	exec >>/tmp/ikev2-manager-deps.log 2>&1
 	deps_status running 'Waiting for other router actions...'
 	if ! acquire_action_lock dependencies "$DEPS_ACTION_ID"; then
-		deps_status error 'Timed out waiting for another router action.'
+		deps_status error 'Another router action is still running.'
 		return 1
 	fi
 	trap 'rm -f "$action_lock_status"; rmdir "$action_lock_dir" 2>/dev/null || true' EXIT INT TERM
@@ -920,8 +922,20 @@ run_remove_deps() {
 	fi
 	swanctl --terminate --ike proxy-out --timeout 3 >/dev/null 2>&1 || true
 	swanctl --terminate --ike ikev2-in --timeout 3 >/dev/null 2>&1 || true
+	swanctl --unload-conn proxy-out >/dev/null 2>&1 || true
+	swanctl --unload-conn ikev2-in >/dev/null 2>&1 || true
 	if [ -x /usr/libexec/ikev2-domain-router ]; then
 		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || true
+	fi
+	if [ -x /etc/init.d/ikev2-xfrm ]; then
+		/etc/init.d/ikev2-xfrm stop >/dev/null 2>&1 || {
+			deps_status error 'XFRM interfaces could not be stopped; dependency removal stopped'
+			return 1
+		}
+		/etc/init.d/ikev2-xfrm disable >/dev/null 2>&1 || {
+			deps_status error 'XFRM service could not be disabled; dependency removal stopped'
+			return 1
+		}
 	fi
 
 	deps_status running 'Restoring the pre-install DNS and package state...'
@@ -930,9 +944,54 @@ run_remove_deps() {
 		deps_status error 'Runtime dependency restore failed; see /tmp/ikev2-manager-deps.log'
 		return 1
 	fi
+	retained_packages="$(printf '%s\n' "${deps_state_retained:-}" | tr '\n' ' ' | sed 's/ *$//')"
+	[ -z "$retained_packages" ] ||
+		printf 'Packages retained because other software requires them: %s\n' "$retained_packages"
+	deps_status running 'Resetting application settings...'
+	if ! reset_application_state; then
+		deps_status error 'Dependencies were restored, but application settings could not be reset completely'
+		return 1
+	fi
 	deps_state_clear
 	doctor >/tmp/ikev2-manager-doctor.last 2>&1 || true
-	deps_status ok 'Pre-install DNS, package and managed routing state was restored.'
+	if [ -n "$retained_packages" ]; then
+		deps_status ok 'Router state restored. Shared packages required by other software were kept.'
+	else
+		deps_status ok 'Pre-install packages, settings and managed routing state were restored.'
+	fi
+}
+
+reset_application_state() {
+	[ -r "$default_app_config" ] || return 1
+	config_tmp="${uci_config_dir}/${config}.new.$$"
+	cp "$default_app_config" "$config_tmp" || return 1
+	chmod 600 "$config_tmp" || { rm -f "$config_tmp"; return 1; }
+	mv "$config_tmp" "${uci_config_dir}/${config}" || return 1
+
+	if uci -q get acme.ikev2 >/dev/null 2>&1; then
+		uci -q delete acme.ikev2 || return 1
+		uci commit acme || return 1
+	fi
+
+	rm -f /etc/ikev2-manager/client.secret /etc/ikev2-manager/users.db
+	rm -f /etc/ikev2-manager/domain-router-cache.db
+	rm -f /etc/ikev2-manager/domain-router-rules.json
+	rm -f /etc/ikev2-manager/domain-router.json /etc/ikev2-manager/pbr-set4.dump
+	rm -rf /etc/ikev2-manager/dns-original /etc/pbr-ikev2-community-cache
+	rm -f /etc/swanctl/conf.d/20-proxy-out.conf
+	rm -f /etc/swanctl/conf.d/30-inbound.conf
+	rm -f /etc/swanctl/conf.d/90-proxy-out-secret.conf
+	rm -f /etc/swanctl/conf.d/91-inbound-secrets.conf
+	rm -f /etc/swanctl/x509/ikev2.pem /etc/swanctl/private/ikev2.key
+	rm -f /etc/swanctl/x509ca/ikev2-le-isrg-root-*.pem
+	rm -f /etc/swanctl/x509ca/ikev2-server-chain-*.pem
+	for file in /etc/pbr-ikev2-domains.txt \
+		/etc/pbr-ikev2-domains.manual.txt \
+		/etc/pbr-ikev2-addresses.manual.txt \
+		/etc/pbr-ikev2-community-selected.txt; do
+		: >"$file" || return 1
+		chmod 600 "$file" || return 1
+	done
 }
 
 remove_deps() {
@@ -1176,7 +1235,8 @@ sync_pbr() {
 	# file present before PBR starts, and avoid enabling an empty domain policy.
 	if [ ! -s "$domain_file" ]; then
 		if [ -x /usr/libexec/ikev2-domains-community ]; then
-			/usr/libexec/ikev2-domains-community apply >/dev/null 2>&1 || true
+			IKEV2_ACTION_LOCK_HELD=1 \
+				/usr/libexec/ikev2-domains-community apply >/dev/null 2>&1 || true
 		fi
 		if [ ! -s "$domain_file" ] && [ -s "$manual_file" ]; then
 			cp "$manual_file" "${domain_file}.tmp"
@@ -1408,6 +1468,82 @@ save_dns_state() {
 	mv "$tmp" "$dir"
 }
 
+repair_dns_original_snapshot() {
+	local dir="$dns_original_dir" work servers server uses_fakeip
+	local restored_servers restored_noresolv restored_cachesize
+	local saved_running listen_addr listen_port destination
+	[ -f "$dir/dhcp.config" ] || return 0
+
+	work="${dir}.repair.$$"
+	rm -rf "$work"
+	mkdir -p "$work" || return 1
+	cp "$dir/dhcp.config" "$work/dhcp" || { rm -rf "$work"; return 1; }
+	servers="$("$uci_binary" -c "$work" -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null || true)"
+	uses_fakeip=0
+	for server in $servers; do
+		case "$server" in
+			127.0.0.42 | 127.0.0.42#53) uses_fakeip=1 ;;
+		esac
+	done
+	if [ "$uses_fakeip" = 0 ]; then
+		rm -rf "$work"
+		return 0
+	fi
+
+	if [ "$(defaultv domains dns_saved 0)" = 1 ]; then
+		restored_servers="$(get_list domains prev_server)"
+		restored_noresolv="$(defaultv domains prev_noresolv 0)"
+		restored_cachesize="$(defaultv domains prev_cachesize 150)"
+	else
+		saved_running="$(sed -n 's/^running=//p' "$dir/service.state" 2>/dev/null | tail -1)"
+		[ "$saved_running" = 1 ] && [ -f "$dir/dnsproxy.config" ] || {
+			rm -rf "$work"
+			return 1
+		}
+		cp "$dir/dnsproxy.config" "$work/dnsproxy" || { rm -rf "$work"; return 1; }
+		listen_addr="$("$uci_binary" -c "$work" -q get dnsproxy.global.listen_addr 2>/dev/null || true)"
+		listen_port="$("$uci_binary" -c "$work" -q get dnsproxy.global.listen_port 2>/dev/null || true)"
+		set -- $listen_addr
+		[ "$#" -eq 1 ] && [ "$1" = 127.0.0.1 ] || { rm -rf "$work"; return 1; }
+		set -- $listen_port
+		[ "$#" -eq 1 ] || { rm -rf "$work"; return 1; }
+		case "$1" in
+			'' | *[!0-9]*) rm -rf "$work"; return 1 ;;
+		esac
+		[ "$1" -ge 1 ] && [ "$1" -le 65535 ] || { rm -rf "$work"; return 1; }
+		restored_servers="127.0.0.1#$1"
+		restored_noresolv=1
+		restored_cachesize="$(uci -q get 'dhcp.@dnsmasq[0].cachesize' 2>/dev/null || true)"
+		case "$restored_cachesize" in
+			'' | *[!0-9]*) restored_cachesize=150 ;;
+		esac
+	fi
+
+	case "$restored_noresolv" in 0 | 1) ;; *) rm -rf "$work"; return 1 ;; esac
+	case "$restored_cachesize" in '' | *[!0-9]*) rm -rf "$work"; return 1 ;; esac
+	"$uci_binary" -c "$work" -q delete 'dhcp.@dnsmasq[0].server' || true
+	for server in $restored_servers; do
+		"$uci_binary" -c "$work" add_list "dhcp.@dnsmasq[0].server=$server" || {
+			rm -rf "$work"
+			return 1
+		}
+	done
+	"$uci_binary" -c "$work" set "dhcp.@dnsmasq[0].noresolv=$restored_noresolv" || {
+		rm -rf "$work"
+		return 1
+	}
+	"$uci_binary" -c "$work" set "dhcp.@dnsmasq[0].cachesize=$restored_cachesize" || {
+		rm -rf "$work"
+		return 1
+	}
+	"$uci_binary" -c "$work" commit dhcp || { rm -rf "$work"; return 1; }
+	destination="$dir/dhcp.config.repair.$$"
+	cp "$work/dhcp" "$destination" || { rm -rf "$work"; return 1; }
+	chmod 600 "$destination" || { rm -f "$destination"; rm -rf "$work"; return 1; }
+	mv "$destination" "$dir/dhcp.config" || { rm -f "$destination"; rm -rf "$work"; return 1; }
+	rm -rf "$work"
+}
+
 restore_dns_state() {
 	local dir="$1" restart_dnsmasq="${2:-1}" package destination enabled running
 	[ -d "$dir" ] || return 0
@@ -1448,10 +1584,12 @@ ensure_dns_original() {
 	   [ -s "$dns_original_dir/service.state" ] &&
 	   { [ -f "$dns_original_dir/dhcp.config" ] || [ -f "$dns_original_dir/dhcp.absent" ]; } &&
 	   { [ -f "$dns_original_dir/dnsproxy.config" ] || [ -f "$dns_original_dir/dnsproxy.absent" ]; }; then
-		return 0
+		repair_dns_original_snapshot
+		return
 	fi
 	rm -rf "$dns_original_dir"
 	save_dns_state "$dns_original_dir" || return 1
+	repair_dns_original_snapshot || { rm -rf "$dns_original_dir"; return 1; }
 	uci set "$config.dns.saved=1"
 	uci commit "$config"
 }
@@ -1562,6 +1700,8 @@ dns_apply() {
 
 	if [ "$managed" = 0 ]; then
 		if [ "$(defaultv dns saved 0)" = 1 ] && [ -d "$dns_original_dir" ]; then
+			repair_dns_original_snapshot ||
+				die 'Saved original DNS state is incomplete; managed DNS remains configured'
 			rollback="/tmp/ikev2-manager-dns-disable-rollback-$$"
 			rm -rf "$rollback"
 			save_dns_state "$rollback" || die 'Unable to snapshot the current DNS configuration'
@@ -1815,11 +1955,12 @@ remove_managed() {
 	# Drop the IPv6 fail-fast route only if we added it (no real v6 default).
 	ip -6 route show default 2>/dev/null | grep -q 'unreachable' &&
 		ip -6 route del unreachable default metric 2147483647 2>/dev/null || true
-	for service in ikev2-health ikev2-xfrm; do
-		[ -x "/etc/init.d/$service" ] || continue
-		/etc/init.d/"$service" stop >/dev/null 2>&1 || return 1
-		/etc/init.d/"$service" disable >/dev/null 2>&1 || return 1
-	done
+	if [ -x /etc/init.d/ikev2-health ]; then
+		/etc/init.d/ikev2-health stop >/dev/null 2>&1 || return 1
+		/etc/init.d/ikev2-health disable >/dev/null 2>&1 || return 1
+	fi
+	# Remove live firewall and PBR references before stopping the XFRM links.
+	# OpenWrt 25 can otherwise block forever inside `ip link del ipsec-in`.
 	fw4 -q check >/dev/null 2>&1 || return 1
 	fw4 -q reload >/dev/null 2>&1 || return 1
 	if [ "$(uci -q get pbr.config.enabled 2>/dev/null || echo 0)" = 1 ]; then
@@ -1827,6 +1968,10 @@ remove_managed() {
 		/etc/init.d/pbr running >/dev/null 2>&1 || return 1
 	else
 		/etc/init.d/pbr stop >/dev/null 2>&1 || return 1
+	fi
+	if [ -x /etc/init.d/ikev2-xfrm ]; then
+		/etc/init.d/ikev2-xfrm stop >/dev/null 2>&1 || return 1
+		/etc/init.d/ikev2-xfrm disable >/dev/null 2>&1 || return 1
 	fi
 }
 
@@ -1995,6 +2140,25 @@ persist_base_config() {
 	[ "$(getv globals source_include_vpn)" = "$include_vpn" ]
 }
 
+base_config_matches() {
+	[ "$(getv globals configured)" = "$enabled" ] &&
+	[ "$(getv globals wan_interface)" = "$wan_interface" ] &&
+	[ "$(getv globals wan_zone)" = "$wan_zone" ] &&
+	[ "$(normalize_list "$(get_list globals source_interface)")" = "$source_interfaces" ] &&
+	[ "$(normalize_list "$(get_list globals source_zone)")" = "$source_zones" ] &&
+	[ "$(getv globals dns_enforce)" = "$dns_enforce" ] &&
+	[ "$(getv globals block_dot)" = "$block_dot" ] &&
+	[ "$(getv globals source_include_vpn)" = "$include_vpn" ]
+}
+
+disabled_runtime_absent() {
+	! uci -q get network.ikev2out >/dev/null 2>&1 &&
+	! uci -q get firewall.ikev2pbr_out >/dev/null 2>&1 &&
+	! uci -q get firewall.ikev2pbr_in >/dev/null 2>&1 &&
+	! uci -q get pbr.ikev2pbr_include >/dev/null 2>&1 &&
+	[ ! -e /usr/share/nftables.d/chain-pre/forward/20-ikev2-killswitch.nft ]
+}
+
 set_config() {
 	[ "$#" -eq 5 ] || [ "$#" -eq 6 ] ||
 		die 'Expected: configured wan_interface source_interfaces dns_enforce block_dot [source_include_vpn]'
@@ -2035,6 +2199,20 @@ set_config() {
 		case " $source_zones " in *" $_z "*) ;; *) source_zones="${source_zones:+$source_zones }$_z" ;; esac
 	done
 	source_interfaces="$unique_sources"
+
+	# Saving identical settings should not rebuild firewall and PBR for 10-20
+	# seconds. Skip the transaction only after proving that the corresponding
+	# runtime is already healthy (or fully absent for disabled mode). Any drift
+	# still falls through to the normal transactional apply/repair path.
+	if base_config_matches; then
+		if [ "$enabled" = 1 ] && [ -x "$routing_check_helper" ] &&
+		   "$routing_check_helper" --check; then
+			return 0
+		fi
+		if [ "$enabled" = 0 ] && disabled_runtime_absent; then
+			return 0
+		fi
+	fi
 
 	if [ "$enabled" = 1 ]; then
 		backup_dir="$(backup_uci_state enable-managed)" ||
@@ -2162,7 +2340,7 @@ run_action() {
 	printf '\n=== %s action=%s id=%s ===\n' "$(date)" "$kind" "$id"
 	action_status "$id" running 'Waiting for other router actions...'
 	if ! acquire_action_lock system "$id"; then
-		action_status "$id" error 'Timed out waiting for another router action.'
+		action_status "$id" error 'Another router action is still running.'
 		return 1
 	fi
 	trap 'rm -f "$action_lock_status"; rmdir "$action_lock_dir" 2>/dev/null || true' EXIT INT TERM

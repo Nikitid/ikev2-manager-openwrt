@@ -267,11 +267,21 @@ restore_output() {
 	fi
 }
 
+restart_policy() {
+	if [ "${IKEV2_ACTION_LOCK_HELD:-0}" = 1 ]; then
+		"$restart_helper" --wait --lock-held
+	else
+		"$restart_helper" --wait
+	fi
+}
+
 apply_once() {
 	local work selected normalized_manual service failed stale
 	local selected_count domain_count cidr_count custom_cidr_count pids pid action_id
 	local batch_count final_bytes
 	action_id="${1:-}"
+	[ -z "$action_id" ] ||
+		write_simple_status "$action_id" running 'Preparing selected domain lists...' || true
 
 	validate_resource_limits || return 1
 	work="$(mktemp -d)" || return 1
@@ -296,6 +306,8 @@ apply_once() {
 		rm -rf "$work"
 		return 1
 	fi
+	[ -z "$action_id" ] ||
+		write_simple_status "$action_id" running 'Downloading selected service lists...' || true
 
 	while IFS= read -r service; do
 		[ -n "$service" ] || continue
@@ -313,6 +325,8 @@ apply_once() {
 		rm -rf "$work"
 		return 1
 	fi
+	[ -z "$action_id" ] ||
+		write_simple_status "$action_id" running 'Building the combined policy list...' || true
 
 	{
 		cat "$normalized_manual"
@@ -350,19 +364,30 @@ apply_once() {
 		return 1
 	fi
 
-	[ ! -e "$final_file" ] || cp "$final_file" "$work/final.before"
-	[ ! -e "$cidr_file" ] || cp "$cidr_file" "$work/cidrs.before"
-	if ! cp "$work/final" "$final_file.tmp" ||
-	   ! chmod 600 "$final_file.tmp" || ! mv "$final_file.tmp" "$final_file" ||
-	   ! cp "$work/cidrs" "$cidr_file.tmp" ||
-	   ! chmod 600 "$cidr_file.tmp" || ! mv "$cidr_file.tmp" "$cidr_file" ||
-	   ! "$restart_helper" --wait; then
-		restore_output "$work/final.before" "$final_file" || true
-		restore_output "$work/cidrs.before" "$cidr_file" || true
-		"$restart_helper" --wait >/dev/null 2>&1 || true
-		rm -f "$final_file.tmp" "$cidr_file.tmp"
-		rm -rf "$work"
-		return 1
+	if [ -e "$final_file" ] && [ -e "$cidr_file" ] &&
+	   cmp -s "$work/final" "$final_file" &&
+	   cmp -s "$work/cidrs" "$cidr_file" &&
+	   "$restart_helper" --check; then
+		[ -z "$action_id" ] ||
+			write_simple_status "$action_id" running \
+				'Policy list unchanged; current routing is healthy.' || true
+	else
+		[ ! -e "$final_file" ] || cp "$final_file" "$work/final.before"
+		[ ! -e "$cidr_file" ] || cp "$cidr_file" "$work/cidrs.before"
+		[ -z "$action_id" ] ||
+			write_simple_status "$action_id" running 'Restarting policy routing...' || true
+		if ! cp "$work/final" "$final_file.tmp" ||
+		   ! chmod 600 "$final_file.tmp" || ! mv "$final_file.tmp" "$final_file" ||
+		   ! cp "$work/cidrs" "$cidr_file.tmp" ||
+		   ! chmod 600 "$cidr_file.tmp" || ! mv "$cidr_file.tmp" "$cidr_file" ||
+		   ! restart_policy; then
+			restore_output "$work/final.before" "$final_file" || true
+			restore_output "$work/cidrs.before" "$cidr_file" || true
+			restart_policy >/dev/null 2>&1 || true
+			rm -f "$final_file.tmp" "$cidr_file.tmp"
+			rm -rf "$work"
+			return 1
+		fi
 	fi
 
 	cidr_count="$(wc -l <"$work/cidrs" | tr -d ' ')"

@@ -23,6 +23,26 @@ grep -q '^owner=tests$' "$action_lock_status"
 rm -f "$action_lock_status"
 rmdir "$action_lock_dir"
 
+sleep 30 &
+lock_holder=$!
+mkdir "$action_lock_dir"
+printf 'owner=busy\naction_id=busy-1\npid=%s\nupdated=%s\n' \
+	"$lock_holder" "$(date +%s)" >"$action_lock_status"
+started="$(date +%s)"
+if IKEV2_ACTION_LOCK_WAIT_SECONDS=1 acquire_action_lock tests test-busy; then
+	echo 'live action lock was acquired by a competing worker' >&2
+	exit 1
+fi
+elapsed=$(( $(date +%s) - started ))
+[ "$elapsed" -le 3 ] || {
+	echo "busy action lock did not fail promptly: ${elapsed}s" >&2
+	exit 1
+}
+kill "$lock_holder"
+wait "$lock_holder" 2>/dev/null || true
+rm -f "$action_lock_status"
+rmdir "$action_lock_dir"
+
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/ip" <<'EOF'
 #!/bin/sh
@@ -267,6 +287,40 @@ fi
 
 grep -Fq '[ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || return 1' \
 	"$root/ikev2-manager-runtime/ikev2-xfrm.init"
+grep -Fq 'if base_config_matches; then' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh"
+grep -Fq '"$routing_check_helper" --check' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh"
+grep -Fq '"$restart_helper" --check' \
+	"$root/luci-ikev2-domains/community-domains.sh"
+grep -Fq 'IKEV2_ACTION_LOCK_HELD=1' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh"
+grep -Fq '"$restart_helper" --wait --lock-held' \
+	"$root/luci-ikev2-domains/community-domains.sh"
+stop_body="$(sed -n '/^stop() {/,/^}/p' \
+	"$root/ikev2-manager-runtime/ikev2-xfrm.init")"
+printf '%s\n' "$stop_body" | grep -Fq 'ip link set ipsec-in down'
+if grep -Fq 'ip link del' "$root/ikev2-manager-runtime/ikev2-xfrm.init"; then
+	echo 'XFRM lifecycle still deletes live interfaces' >&2
+	exit 1
+fi
+sed -n '/run_remove_deps()/,/^}/p' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh" |
+	grep -Fq '/etc/init.d/ikev2-xfrm stop'
+if grep -Fq 'ikev2-xfrm purge' "$root/ikev2-manager-runtime/ikev2-manager-system.sh" \
+	"$root/scripts/package-prerm.sh" "$root/Makefile"; then
+	echo 'package cleanup still attempts unsafe XFRM deletion' >&2
+	exit 1
+fi
+remove_managed_body="$(sed -n '/^remove_managed() {/,/^}/p' \
+	"$root/ikev2-manager-runtime/ikev2-manager-system.sh")"
+fw_reload_line="$(printf '%s\n' "$remove_managed_body" | grep -n 'fw4 -q reload' | head -1 | cut -d: -f1)"
+xfrm_stop_line="$(printf '%s\n' "$remove_managed_body" | grep -n 'ikev2-xfrm stop' | head -1 | cut -d: -f1)"
+[ -n "$fw_reload_line" ] && [ -n "$xfrm_stop_line" ] &&
+	[ "$fw_reload_line" -lt "$xfrm_stop_line" ] || {
+	echo 'managed cleanup still stops XFRM before removing firewall references' >&2
+	exit 1
+}
 if grep -Fq 'strongswan-security server' \
 	"$root/ikev2-manager-runtime/ikev2-xfrm.init"; then
 	echo 'inbound XFRM is still blocked by the strongSwan advisory' >&2

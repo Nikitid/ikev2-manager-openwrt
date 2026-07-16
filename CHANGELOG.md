@@ -4,6 +4,34 @@ This project follows semantic versioning for the application and release tags.
 
 ## Unreleased
 
+## 1.1.1 - 2026-07-16
+
+- Avoided full firewall/PBR rebuilds when managed settings or the combined
+  domain/CIDR policy are unchanged and the live runtime passes health checks;
+  degraded state still takes the full transactional repair path.
+- Fixed OpenWrt 25 package removal cleanup when apk passes the installed
+  package version to `pre-deinstall`; upgrades remain non-disruptive through
+  the separate upgrade guard.
+- Prevented managed enable from waiting on its own global action lock when it
+  rebuilds a preserved domain policy after package reinstallation.
+
+- Made router-wide background actions reject a competing operation promptly
+  instead of waiting behind it for up to three minutes.
+- Added phase updates and a longer status-poll window for policy-list rebuilds;
+  a normal PBR restart can take tens of seconds on the router.
+- Changed XFRM shutdown ordering so live PBR and firewall references are
+  removed before interfaces are stopped. Runtime cleanup no longer depends on
+  deleting an XFRM link, which can block inside the OpenWrt 25 kernel.
+- Made runtime dependency removal restore the recorded pre-install baseline,
+  remove only application-owned packages, retain packages required by other
+  software and reset application-owned settings and generated state.
+- Repaired legacy original-DNS snapshots that captured the application's
+  `127.0.0.42` FakeIP resolver. Restoration uses the domain router's saved
+  upstream or a previously running loopback dnsproxy and otherwise stops safely
+  before package removal.
+- Added regression checks for action-lock contention, XFRM stop ordering,
+  shared dependency retention, PBR progress and full application reset.
+
 ## 1.1.0 - 2026-07-15
 
 - Standardized all LuCI actions on local inline status feedback instead of

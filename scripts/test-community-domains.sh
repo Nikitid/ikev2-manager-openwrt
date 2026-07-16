@@ -41,6 +41,8 @@ EOF
 chmod 755 "$tmp/bin/uclient-fetch"
 cat >"$tmp/bin/restart-helper" <<'EOF'
 #!/bin/sh
+[ "$1" != --check ] || exit "${TEST_RESTART_CHECK_RC:-0}"
+printf '%s\n' "$*" >>"$TEST_RESTART_LOG"
 [ ! -f "$TEST_RESTART_FAIL" ] || {
 	rm -f "$TEST_RESTART_FAIL"
 	exit 1
@@ -79,10 +81,15 @@ run_helper() (
 	IKEV2_LOCAL_SERVICES_DIR="$tmp/local" \
 	IKEV2_RAW_BASE=https://lists.invalid \
 	TEST_RESTART_FAIL="$tmp/restart.fail" \
+	TEST_RESTART_LOG="$tmp/restart.log" \
+	TEST_RESTART_CHECK_RC="${TEST_RESTART_CHECK_RC:-0}" \
+	IKEV2_ACTION_LOCK_HELD="${IKEV2_ACTION_LOCK_HELD:-0}" \
 		sh "$root/luci-ikev2-domains/community-domains.sh" "$@"
 )
 
+: >"$tmp/restart.log"
 run_helper apply
+[ "$(wc -l <"$tmp/restart.log" | tr -d ' ')" = 1 ]
 printf '%s\n' direct.example local.example remote.example |
 	cmp -s - "$tmp/domains"
 printf '%s\n' 149.154.160.0/20 198.51.100.0/24 203.0.113.10/32 91.108.4.0/22 |
@@ -93,6 +100,18 @@ grep -q '^cidrs=4$' "$tmp/status"
 grep -q '^custom_cidrs=2$' "$tmp/status"
 grep -q '^selected=direct,local,remote$' "$tmp/status"
 [ "$(run_helper ip-services)" = direct ]
+
+# An identical policy with a healthy runtime must not restart PBR. If the
+# health check fails, the same input must still take the full repair path.
+run_helper apply
+[ "$(wc -l <"$tmp/restart.log" | tr -d ' ')" = 1 ]
+TEST_RESTART_CHECK_RC=1 run_helper apply
+[ "$(wc -l <"$tmp/restart.log" | tr -d ' ')" = 2 ]
+
+printf '%s\n' held.example >"$tmp/manual"
+IKEV2_ACTION_LOCK_HELD=1 run_helper apply
+[ "$(tail -n1 "$tmp/restart.log")" = '--wait --lock-held' ]
+printf '%s\n' local.example >"$tmp/manual"
 
 cp "$tmp/domains" "$tmp/domains.before"
 cp "$tmp/cidrs" "$tmp/cidrs.before"

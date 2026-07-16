@@ -20,6 +20,9 @@ grep -Fq "throw new Error(_('Invalid fallback DNS endpoint'))" "$client"
 grep -Fq "dns_error_file=\"/tmp/ikev2-dns-action-\$id.error\"" "$system"
 grep -Fq '[ "$managed" = 0 ] || valid_name "$provider"' "$system"
 grep -Fq "_dns-apply-inner 0 '' '' '' '' '' ''" "$system"
+grep -Fq '127.0.0.42 | 127.0.0.42#53) uses_fakeip=1' "$system"
+grep -Fq 'repair_dns_original_snapshot ||' "$system"
+grep -Fq "die 'Saved original DNS state is incomplete; managed DNS remains configured'" "$system"
 
 grep -Fq "dot) prefix='tls://'" "$system"
 if grep -Fq "prefix='tls:'" "$system"; then

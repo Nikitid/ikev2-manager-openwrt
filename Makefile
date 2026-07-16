@@ -5,7 +5,7 @@ PKG_NAME:=luci-app-ikev2-manager
 # canonical build (scripts/build-ipk.sh). These SDK literals are kept in sync
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
-PKG_VERSION:=1.1.0
+PKG_VERSION:=1.1.1
 PKG_RELEASE:=
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
@@ -116,6 +116,8 @@ define Package/luci-app-ikev2-manager/install
 
 	$(INSTALL_DIR) $(1)/etc/ikev2-manager
 	$(INSTALL_DATA) ./openwrt/files/etc/ikev2-manager/README $(1)/etc/ikev2-manager/README
+	$(INSTALL_DIR) $(1)/usr/share/ikev2-manager/defaults
+	$(INSTALL_CONF) ./openwrt/files/etc/config/ikev2-manager $(1)/usr/share/ikev2-manager/defaults/ikev2-manager
 	$(INSTALL_CONF) ./openwrt/files/etc/pbr-ikev2-domains.manual.txt $(1)/etc/pbr-ikev2-domains.manual.txt
 	$(INSTALL_CONF) ./openwrt/files/etc/pbr-ikev2-addresses.manual.txt $(1)/etc/pbr-ikev2-addresses.manual.txt
 	touch $(1)/etc/pbr-ikev2-domains.txt
@@ -199,9 +201,7 @@ set -eu
 [ -n "$${IPKG_INSTROOT:-}" ] && exit 0
 [ "$${PKG_UPGRADE:-0}" = 1 ] && exit 0
 case "$${1:-}" in
-	remove | '') ;;
 	upgrade) exit 0 ;;
-	*) exit 0 ;;
 esac
 fail() {
 	echo "IKEv2 Manager for OpenWrt: $$*" >&2
@@ -213,6 +213,8 @@ fail() {
 	fail "unable to restore managed router state; package removal stopped before changing files"
 swanctl --terminate --ike proxy-out --timeout 3 >/dev/null 2>&1 || true
 swanctl --terminate --ike ikev2-in --timeout 3 >/dev/null 2>&1 || true
+swanctl --unload-conn proxy-out >/dev/null 2>&1 || true
+swanctl --unload-conn ikev2-in >/dev/null 2>&1 || true
 rm -f /etc/swanctl/conf.d/20-proxy-out.conf
 rm -f /etc/swanctl/conf.d/30-inbound.conf
 rm -f /etc/swanctl/conf.d/90-proxy-out-secret.conf

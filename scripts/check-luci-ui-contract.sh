@@ -43,5 +43,17 @@ if grep -Fq 'Blocked — strongSwan upgrade required' \
 	exit 1
 fi
 grep -Fq "notice ? 'info'" 'luci-ikev2-manager/setup.js'
+grep -Fq "Reset app and remove dependencies" 'luci-ikev2-manager/setup.js'
+grep -Fq "removing only the package in Software preserves configuration and dependencies" \
+	'luci-ikev2-manager/setup.js'
+grep -Fq "Date.now() + 120000" 'luci-ikev2-domains/editor.js'
+grep -Fq "result.busy(_(st.message))" 'luci-ikev2-domains/editor.js'
+for phase in \
+	'Preparing selected domain lists...' \
+	'Downloading selected service lists...' \
+	'Building the combined policy list...' \
+	'Restarting policy routing...'; do
+	grep -Fq "$phase" 'luci-ikev2-domains/community-domains.sh'
+done
 
 printf '%s\n' 'luci UI contract OK'
