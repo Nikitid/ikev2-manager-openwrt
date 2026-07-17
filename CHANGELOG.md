@@ -2,6 +2,14 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.1.5 - 2026-07-17
+
+- Reworked detected network and firewall-zone selectors into consistent
+  selectable cards while retaining a separate custom-value fallback.
+- Aligned the protected-network cards in one adaptive row and placed the custom
+  network option below them.
+- Fixed field-label spacing outside the standard form grid.
+
 ## 1.1.4 - 2026-07-17
 
 - Shortened the LuCI Services menu title to `IKEv2 Manager` and aligned the

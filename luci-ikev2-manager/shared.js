@@ -1295,8 +1295,8 @@ function styles() {
 				gap: .9rem 1.4rem;
 				align-items: center;
 			}
-			.ikev2-form-grid .ikev2-field-label { font-weight: 620; }
-			.ikev2-form-grid .ikev2-field-help {
+			.ikev2-field-label { font-weight: 620; }
+			.ikev2-field-help {
 				display: block;
 				margin-top: .22rem;
 				font-size: .8rem;
@@ -2310,49 +2310,58 @@ function choiceWithCustom(value, choices, options) {
 // checkboxes; values no longer present on the router stay in the Custom field.
 function multiChoiceWithCustom(value, choices, options) {
 	options = options || {};
-	var inputs = [];
-	var customToggle = E('input', { 'type': 'checkbox' });
+	var picks = [];
 	var customField = E('input', {
 		'type': 'text',
 		'class': 'cbi-input-text',
 		'placeholder': options.placeholder || ''
 	});
-	var list = E('div', { 'class': 'ikev2-choice-list' },
-		(choices || []).map(function(choice) {
-			var checkbox = E('input', { 'type': 'checkbox', 'value': String(choice.value) });
-			inputs.push(checkbox);
-			return E('label', {}, [ checkbox, E('span', {}, [ choice.label ]) ]);
-		}).concat([
-			E('label', {}, [ customToggle, E('span', {}, [ options.customLabel || _('Custom…') ]) ])
-		]));
-	var node = E('div', { 'class': 'ikev2-choice-custom' }, [ list, customField ]);
+	var knownNodes = (options.prependNodes || []).slice();
+	knownNodes = knownNodes.concat((choices || []).map(function(choice) {
+			var pick = netPick(String(choice.value), choice.name || choice.label,
+				choice.meta || '', false);
+			picks.push(pick);
+			return pick.node;
+		}));
+	var list = E('div', { 'class': 'ikev2-netpick-grid' }, knownNodes);
+	var customPick = netPick('__custom__', options.customLabel || _('Custom…'),
+		options.customMeta || '', false);
+	var customList;
+	if (options.customBelow)
+		customList = E('div', { 'class': 'ikev2-netpick-grid' }, [ customPick.node ]);
+	else {
+		list.appendChild(customPick.node);
+		customList = '';
+	}
+	var node = E('div', { 'class': 'ikev2-choice-custom' },
+		[ list, customList, customField ]);
 
 	function sync() {
-		customField.style.display = customToggle.checked ? '' : 'none';
-		customField.disabled = !customToggle.checked;
+		customField.style.display = customPick.input.checked ? '' : 'none';
+		customField.disabled = !customPick.input.checked;
 	}
 
 	function setValue(next) {
 		var selected = String(next || '').trim().split(/\s+/).filter(Boolean);
 		var known = {};
-		inputs.forEach(function(checkbox) {
-			known[checkbox.value] = true;
-			checkbox.checked = selected.indexOf(checkbox.value) >= 0;
+		picks.forEach(function(pick) {
+			known[pick.input.value] = true;
+			pick.setChecked(selected.indexOf(pick.input.value) >= 0);
 		});
 		var custom = selected.filter(function(item) { return !known[item]; });
 		customField.value = custom.join(' ');
-		customToggle.checked = custom.length > 0 || !inputs.length;
+		customPick.setChecked(custom.length > 0 || !picks.length);
 		sync();
 	}
 
-	customToggle.addEventListener('change', sync);
+	customPick.input.addEventListener('change', sync);
 	setValue(value);
 	return {
 		node: node,
 		value: function() {
-			var selected = inputs.filter(function(checkbox) { return checkbox.checked; })
-				.map(function(checkbox) { return checkbox.value; });
-			if (customToggle.checked)
+			var selected = picks.filter(function(pick) { return pick.input.checked; })
+				.map(function(pick) { return pick.input.value; });
+			if (customPick.input.checked)
 				selected = selected.concat(customField.value.trim().split(/\s+/).filter(Boolean));
 			return selected.filter(function(item, index) { return selected.indexOf(item) === index; }).join(' ');
 		},
@@ -2383,10 +2392,12 @@ function netPick(value, name, meta, checked) {
 			meta ? E('span', { 'class': 'ikev2-netpick-meta' }, [ meta ]) : ''
 		])
 	]);
-	input.addEventListener('change', function() {
+	function setChecked(next) {
+		input.checked = !!next;
 		card.classList.toggle('selected', input.checked);
-	});
-	return { node: card, input: input };
+	}
+	input.addEventListener('change', function() { setChecked(input.checked); });
+	return { node: card, input: input, setChecked: setChecked };
 }
 
 // Inline status chip shown next to an action button instead of a top-of-page

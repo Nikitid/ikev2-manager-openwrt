@@ -193,7 +193,7 @@ return view.extend({
 		});
 		var lanZones = common.multiChoiceWithCustom(access.lan_zones,
 			internalZones.map(function(zone) {
-				return { value: zone.name, label: zone.value ? zone.name + ' — ' + zone.value : zone.name };
+				return { value: zone.name, name: zone.name, meta: zone.value || '' };
 			}), { placeholder: 'lan guest iot' });
 		var firewallZone = common.choiceWithCustom(access.firewall_zone, [
 			{ value: 'ikev2in', label: _('Automatic') + ' — ikev2in' }

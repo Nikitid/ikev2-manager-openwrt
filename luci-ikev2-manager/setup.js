@@ -470,12 +470,15 @@ return view.extend({
 		}), { placeholder: 'wan' });
 		protectedField = common.multiChoiceWithCustom(value.source_interfaces,
 			netList.filter(function(o) { return o.name !== value.wan_interface; })
-				.map(function(o) { return { value: o.name, label: o.name + ' — ' + o.cidr }; }),
-			{ placeholder: 'lan iot' });
-		var protectedNode = E('div', { 'class': 'ikev2-choice-custom' }, [
-			vpnPick ? vpnPick.node : '',
-			protectedField.node
-		]);
+				.map(function(o) {
+					return { value: o.name, name: o.name, meta: o.cidr };
+				}),
+			{
+				placeholder: 'lan iot',
+				prependNodes: vpnPick ? [ vpnPick.node ] : [],
+				customBelow: true
+			});
+		var protectedNode = protectedField.node;
 
 		save.addEventListener('click', function() {
 			var selectedWan = wanField.value();
