@@ -1,6 +1,6 @@
 {
 	"admin/services/ikev2-manager": {
-		"title": "IKEv2 Manager for OpenWrt",
+		"title": "IKEv2 Manager",
 		"order": 90,
 		"action": {
 			"type": "firstchild"

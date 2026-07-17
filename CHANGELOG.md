@@ -2,6 +2,11 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.1.4 - 2026-07-17
+
+- Shortened the LuCI Services menu title to `IKEv2 Manager` and aligned the
+  installation instructions with the new navigation label.
+
 ## 1.1.3 - 2026-07-16
 
 - Split outbound traffic reporting into the current CHILD_SA counter, including

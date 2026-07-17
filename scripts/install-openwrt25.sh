@@ -95,4 +95,4 @@ apk add "$PACKAGE_NAME" || fail 'package installation failed'
 
 committed=1
 printf '\nIKEv2 Manager installation complete.\n'
-printf 'Open LuCI -> Services -> IKEv2 Manager for OpenWrt.\n'
+printf 'Open LuCI -> Services -> IKEv2 Manager.\n'

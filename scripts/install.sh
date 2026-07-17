@@ -68,5 +68,5 @@ pkg_install "$package" || die "Package installation failed; restore configuratio
 cat <<'EOF'
 
 Installation complete. No VPN tunnel, PBR policy or firewall rule was enabled.
-Open LuCI -> Services -> IKEv2 Manager for OpenWrt -> Overview.
+Open LuCI -> Services -> IKEv2 Manager -> Overview.
 EOF

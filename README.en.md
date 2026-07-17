@@ -45,7 +45,7 @@ System -> Software -> Upload Package
 Then open:
 
 ```text
-Services -> IKEv2 Manager for OpenWrt -> Overview
+Services -> IKEv2 Manager -> Overview
 ```
 
 Install the dependencies, select the WAN and protected networks, enable

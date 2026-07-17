@@ -5,7 +5,7 @@ PKG_NAME:=luci-app-ikev2-manager
 # canonical build (scripts/build-ipk.sh). These SDK literals are kept in sync
 # manually because OpenWrt's relative include path is unreliable;
 # scripts/check-version-sync.sh fails the canonical build if they drift (B3).
-PKG_VERSION:=1.1.3
+PKG_VERSION:=1.1.4
 PKG_RELEASE:=
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=nikitid
@@ -191,7 +191,7 @@ if [ "$$(uci -q get ikev2-manager.globals.configured)" = 1 ] || \
 	echo "Existing configuration detected; runtime was not started automatically."
 fi
 echo "IKEv2 Manager for OpenWrt installed."
-echo "Open LuCI -> Services -> IKEv2 Manager for OpenWrt."
+echo "Open LuCI -> Services -> IKEv2 Manager."
 exit 0
 endef
 

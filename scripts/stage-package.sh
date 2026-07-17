@@ -146,7 +146,7 @@ if [ "$(uci -q get ikev2-manager.globals.configured)" = 1 ] || \
 	echo "Existing configuration detected; runtime was not started automatically."
 fi
 echo "IKEv2 Manager for OpenWrt installed."
-echo "Open LuCI -> Services -> IKEv2 Manager for OpenWrt."
+echo "Open LuCI -> Services -> IKEv2 Manager."
 exit 0
 EOF
 

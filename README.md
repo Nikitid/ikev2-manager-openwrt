@@ -46,7 +46,7 @@ System -> Software -> Upload Package
 После установки откройте:
 
 ```text
-Services -> IKEv2 Manager for OpenWrt -> Overview
+Services -> IKEv2 Manager -> Overview
 ```
 
 Установите зависимости, выберите WAN и защищаемые сети, включите управляемый
