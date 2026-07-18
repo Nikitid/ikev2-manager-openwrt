@@ -61,8 +61,10 @@ sh /tmp/install-ikev2-manager.sh
 The script checks the exact OpenWrt release and target, verifies the release
 public-key checksum, installs the key under `/etc/apk/keys/`, registers the
 signed GitHub Release feed, refreshes indexes and simulates the package
-transaction before installation. A failed bootstrap restores the previous
-key/feed state.
+transaction before installation or upgrade. Release assets are fetched from a
+fixed release while the persistent package feed follows the latest stable
+release through the redirect-free `apk-feed` branch. A failed bootstrap
+restores the previous key/feed state.
 
 Later updates use the normal package manager:
 

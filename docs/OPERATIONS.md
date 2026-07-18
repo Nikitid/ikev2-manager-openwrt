@@ -32,7 +32,8 @@ wget -O /tmp/install-ikev2-manager.sh \
 sh /tmp/install-ikev2-manager.sh
 ```
 
-This installs the project public key and signed feed before adding the package.
+This installs the project public key and signed stable feed before adding or
+upgrading the package.
 It requires working HTTPS access to GitHub Releases and the official OpenWrt
 feeds. It does not enable VPN, PBR, DNS replacement or firewall rules.
 

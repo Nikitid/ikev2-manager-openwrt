@@ -70,3 +70,25 @@ jobs:
             dist/*.ipk
             dist/SHA256SUMS
             dist/apk-feed/*
+      - name: Publish stable APK channel
+        if: ${{ !contains(github.ref_name, '_rc') && !contains(github.ref_name, '_beta') && !contains(github.ref_name, '_alpha') }}
+        run: |
+          channel_dir="$RUNNER_TEMP/ikev2-manager-apk-channel"
+          if git ls-remote --exit-code --heads origin refs/heads/apk-feed >/dev/null; then
+            git fetch origin refs/heads/apk-feed:refs/remotes/origin/apk-feed
+            git worktree add -b apk-feed "$channel_dir" origin/apk-feed
+          else
+            git worktree add --detach "$channel_dir"
+            git -C "$channel_dir" switch --orphan apk-feed
+          fi
+          cp dist/apk-feed/packages.adb \
+            dist/apk-feed/ikev2-manager-release.pem \
+            dist/apk-feed/*.apk \
+            "$channel_dir/"
+          git -C "$channel_dir" config user.name 'github-actions[bot]'
+          git -C "$channel_dir" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$channel_dir" add packages.adb ikev2-manager-release.pem '*.apk'
+          if ! git -C "$channel_dir" diff --cached --quiet; then
+            git -C "$channel_dir" commit -m "feed: ${GITHUB_REF_NAME}"
+            git -C "$channel_dir" push origin HEAD:apk-feed
+          fi

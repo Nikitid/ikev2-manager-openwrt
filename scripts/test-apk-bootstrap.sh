@@ -24,6 +24,9 @@ cat >"$tmp/bin/apk" <<'EOF'
 #!/bin/sh
 set -eu
 printf '%s\n' "$*" >>"$TEST_APK_LOG"
+if [ "$1" = info ] && [ "$2" = --installed ]; then
+	[ "${TEST_APK_INSTALLED:-0}" = 1 ]
+fi
 if [ "${TEST_APK_FAIL_UPDATE:-0}" = 1 ] && [ "$1" = update ]; then
 	exit 1
 fi
@@ -58,6 +61,25 @@ grep -qx 'update' "$tmp/apk-success.log"
 grep -qx 'add --simulate luci-app-ikev2-manager' "$tmp/apk-success.log"
 grep -qx 'add luci-app-ikev2-manager' "$tmp/apk-success.log"
 
+upgrade_root="$tmp/upgrade"
+new_root "$upgrade_root"
+mkdir -p "$upgrade_root/etc/apk/keys" "$upgrade_root/etc/apk/repositories.d"
+cp "$root/$OPENWRT_APK_KEY_FILE" \
+	"$upgrade_root/etc/apk/keys/ikev2-manager-release.pem"
+printf '%s\n' 'https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/v1.1.5/packages.adb' \
+	>"$upgrade_root/etc/apk/repositories.d/ikev2-manager.list"
+: >"$tmp/apk-upgrade.log"
+PATH="$tmp/bin:$PATH" \
+TEST_APK_KEY="$root/$OPENWRT_APK_KEY_FILE" \
+TEST_APK_LOG="$tmp/apk-upgrade.log" \
+TEST_APK_INSTALLED=1 \
+IKEV2_INSTALL_ROOT="$upgrade_root" \
+	"$root/scripts/install-openwrt25.sh" >/dev/null
+[ "$(cat "$upgrade_root/etc/apk/repositories.d/ikev2-manager.list")" = \
+	"$OPENWRT_APK_FEED_URL" ]
+grep -qx 'upgrade --simulate luci-app-ikev2-manager' "$tmp/apk-upgrade.log"
+grep -qx 'upgrade luci-app-ikev2-manager' "$tmp/apk-upgrade.log"
+
 candidate_root="$tmp/candidate"
 candidate_base='https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/v1.1.0_rc2'
 new_root "$candidate_root"
@@ -71,7 +93,7 @@ IKEV2_APK_RELEASE_BASE="$candidate_base" \
 IKEV2_INSTALL_ROOT="$candidate_root" \
 	"$root/scripts/install-openwrt25.sh" >/dev/null
 [ "$(cat "$candidate_root/etc/apk/repositories.d/ikev2-manager.list")" = \
-	"$candidate_base/packages.adb" ]
+	"$OPENWRT_APK_FEED_URL" ]
 grep -Fxq "$candidate_base/ikev2-manager-release.pem" "$tmp/wget-candidate.log"
 
 failure_root="$tmp/failure"

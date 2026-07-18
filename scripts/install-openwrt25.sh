@@ -4,8 +4,10 @@ set -eu
 
 OPENWRT_APK_TRUST_SHA256=f27474d9261f1084350cf4ba34ecdff29e533769c36483d8dd85566e30a6a703
 OPENWRT_APK_RELEASE_BASE=https://github.com/Nikitid/ikev2-manager-openwrt/releases/latest/download
+OPENWRT_APK_CHANNEL_BASE=https://raw.githubusercontent.com/Nikitid/ikev2-manager-openwrt/apk-feed
 OPENWRT_APK_RELEASE_BASE="${IKEV2_APK_RELEASE_BASE:-$OPENWRT_APK_RELEASE_BASE}"
-OPENWRT_APK_FEED_URL="$OPENWRT_APK_RELEASE_BASE/packages.adb"
+OPENWRT_APK_CHANNEL_BASE="${IKEV2_APK_CHANNEL_BASE:-$OPENWRT_APK_CHANNEL_BASE}"
+OPENWRT_APK_FEED_URL="$OPENWRT_APK_CHANNEL_BASE/packages.adb"
 OPENWRT_APK_KEY_URL="$OPENWRT_APK_RELEASE_BASE/ikev2-manager-release.pem"
 PACKAGE_NAME=luci-app-ikev2-manager
 
@@ -89,9 +91,15 @@ if [ "$current_repo" != "$OPENWRT_APK_FEED_URL" ]; then
 fi
 
 apk update || fail 'package indexes could not be updated; no package was installed'
-apk add --simulate "$PACKAGE_NAME" ||
-	fail 'package transaction validation failed; no package was installed'
-apk add "$PACKAGE_NAME" || fail 'package installation failed'
+if apk info --installed "$PACKAGE_NAME" >/dev/null 2>&1; then
+	apk upgrade --simulate "$PACKAGE_NAME" ||
+		fail 'package upgrade validation failed; the installed package was not changed'
+	apk upgrade "$PACKAGE_NAME" || fail 'package upgrade failed'
+else
+	apk add --simulate "$PACKAGE_NAME" ||
+		fail 'package transaction validation failed; no package was installed'
+	apk add "$PACKAGE_NAME" || fail 'package installation failed'
+fi
 
 committed=1
 printf '\nIKEv2 Manager installation complete.\n'
