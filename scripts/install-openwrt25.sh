@@ -41,8 +41,10 @@ done
 tmp="$(mktemp -d)"
 key_path="$install_root/etc/apk/keys/ikev2-manager-release.pem"
 repo_path="$install_root/etc/apk/repositories.d/ikev2-manager.list"
+world_path="$install_root/etc/apk/world"
 key_added=0
 repo_changed=0
+world_changed=0
 committed=0
 
 cleanup() {
@@ -55,6 +57,9 @@ cleanup() {
 			else
 				rm -f "$repo_path"
 			fi
+		fi
+		if [ "$world_changed" -eq 1 ] && [ -f "$tmp/world.previous" ]; then
+			cp "$tmp/world.previous" "$world_path"
 		fi
 	fi
 	rm -rf "$tmp"
@@ -88,6 +93,17 @@ if [ "$current_repo" != "$OPENWRT_APK_FEED_URL" ]; then
 	printf '%s\n' "$OPENWRT_APK_FEED_URL" >"$repo_path"
 	chmod 0644 "$repo_path"
 	repo_changed=1
+fi
+
+if [ -r "$world_path" ] && grep -q "^${PACKAGE_NAME}><Q" "$world_path"; then
+	cp "$world_path" "$tmp/world.previous"
+	awk -v package="$PACKAGE_NAME" '
+		index($0, package "><Q") == 1 { print package; next }
+		{ print }
+	' "$world_path" >"${world_path}.new"
+	chmod 0644 "${world_path}.new"
+	mv "${world_path}.new" "$world_path"
+	world_changed=1
 fi
 
 apk update || fail 'package indexes could not be updated; no package was installed'

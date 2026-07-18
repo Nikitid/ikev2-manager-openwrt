@@ -36,6 +36,9 @@ This installs the project public key and signed stable feed before adding or
 upgrading the package.
 It requires working HTTPS access to GitHub Releases and the official OpenWrt
 feeds. It does not enable VPN, PBR, DNS replacement or firewall rules.
+When migrating a package previously installed from a local APK, it removes only
+the application's identity-hash constraint before the scoped upgrade; other
+packages are not upgraded.
 
 Subsequent updates use:
 

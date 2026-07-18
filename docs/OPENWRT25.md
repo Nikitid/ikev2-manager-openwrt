@@ -66,6 +66,11 @@ fixed release while the persistent package feed follows the latest stable
 release through the redirect-free `apk-feed` branch. A failed bootstrap
 restores the previous key/feed state.
 
+Older local APK installations can leave an identity-hash constraint in
+`/etc/apk/world`. The bootstrap replaces only that application's constraint
+before the scoped package upgrade and restores it if the transaction fails. It
+does not run a system-wide package upgrade.
+
 Later updates use the normal package manager:
 
 ```sh

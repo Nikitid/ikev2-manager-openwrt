@@ -68,6 +68,8 @@ cp "$root/$OPENWRT_APK_KEY_FILE" \
 	"$upgrade_root/etc/apk/keys/ikev2-manager-release.pem"
 printf '%s\n' 'https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/v1.1.5/packages.adb' \
 	>"$upgrade_root/etc/apk/repositories.d/ikev2-manager.list"
+printf '%s\n' 'luci-app-ikev2-manager><Q1p3AuNzlw8fR0ahxyjelaHyzNt6g=' \
+	>"$upgrade_root/etc/apk/world"
 : >"$tmp/apk-upgrade.log"
 PATH="$tmp/bin:$PATH" \
 TEST_APK_KEY="$root/$OPENWRT_APK_KEY_FILE" \
@@ -77,8 +79,35 @@ IKEV2_INSTALL_ROOT="$upgrade_root" \
 	"$root/scripts/install-openwrt25.sh" >/dev/null
 [ "$(cat "$upgrade_root/etc/apk/repositories.d/ikev2-manager.list")" = \
 	"$OPENWRT_APK_FEED_URL" ]
+[ "$(cat "$upgrade_root/etc/apk/world")" = 'luci-app-ikev2-manager' ]
 grep -qx 'upgrade --simulate luci-app-ikev2-manager' "$tmp/apk-upgrade.log"
 grep -qx 'upgrade luci-app-ikev2-manager' "$tmp/apk-upgrade.log"
+
+upgrade_failure_root="$tmp/upgrade-failure"
+new_root "$upgrade_failure_root"
+mkdir -p "$upgrade_failure_root/etc/apk/keys" \
+	"$upgrade_failure_root/etc/apk/repositories.d"
+cp "$root/$OPENWRT_APK_KEY_FILE" \
+	"$upgrade_failure_root/etc/apk/keys/ikev2-manager-release.pem"
+old_repo='https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/v1.1.5/packages.adb'
+old_world='luci-app-ikev2-manager><Q1p3AuNzlw8fR0ahxyjelaHyzNt6g='
+printf '%s\n' "$old_repo" \
+	>"$upgrade_failure_root/etc/apk/repositories.d/ikev2-manager.list"
+printf '%s\n' "$old_world" >"$upgrade_failure_root/etc/apk/world"
+: >"$tmp/apk-upgrade-failure.log"
+if PATH="$tmp/bin:$PATH" \
+	TEST_APK_KEY="$root/$OPENWRT_APK_KEY_FILE" \
+	TEST_APK_LOG="$tmp/apk-upgrade-failure.log" \
+	TEST_APK_INSTALLED=1 \
+	TEST_APK_FAIL_UPDATE=1 \
+	IKEV2_INSTALL_ROOT="$upgrade_failure_root" \
+	"$root/scripts/install-openwrt25.sh" >/dev/null 2>&1; then
+	printf 'failed upgrade bootstrap unexpectedly succeeded\n' >&2
+	exit 1
+fi
+[ "$(cat "$upgrade_failure_root/etc/apk/repositories.d/ikev2-manager.list")" = \
+	"$old_repo" ]
+[ "$(cat "$upgrade_failure_root/etc/apk/world")" = "$old_world" ]
 
 candidate_root="$tmp/candidate"
 candidate_base='https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/v1.1.0_rc2'

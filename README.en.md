@@ -62,7 +62,7 @@ sh /tmp/install-ikev2-manager.sh
 
 The installer verifies the release public key and registers a signed stable APK
 repository without redirects. If the application was installed before version
-`1.1.8`, run these two commands once more: the installer upgrades the package
+`1.1.9`, run these two commands once more: the installer upgrades the package
 and moves the existing installation to the stable repository.
 
 Later updates:

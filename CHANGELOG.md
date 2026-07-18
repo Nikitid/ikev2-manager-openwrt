@@ -2,13 +2,19 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.1.9 - 2026-07-18
+
+- Migrated the identity-hash constraint left by older local APK installations
+  to the signed repository package before a scoped upgrade, with rollback when
+  the index refresh or package transaction fails.
+
 ## 1.1.8 - 2026-07-18
 
 - Added a redirect-free OpenWrt 25 APK channel that advances only for stable
   releases instead of pinning clients to the bootstrap release, and made repeat
   bootstrap runs upgrade an installed package after transaction simulation.
-- Documented the one-time bootstrap refresh required to move installations
-  older than 1.1.8 onto the stable APK channel.
+- Documented the one-time bootstrap refresh required to move older
+  installations onto the stable APK channel.
 
 ## 1.1.7 - 2026-07-18
 
