@@ -1843,7 +1843,12 @@ function styles() {
 			   right edge so it lines up with the bottom-right convention. */
 			.ikev2-inline-form > input { flex: 1 1 12rem; min-width: 10rem; }
 			.ikev2-inline-form > select { flex: 1 1 15rem; min-width: 12rem; }
-			.ikev2-inline-form > .ikev2-device-picker { flex: 2 1 22rem; min-width: 16rem; }
+			.ikev2-inline-form > .ikev2-device-picker { flex: 2 1 30rem; min-width: 20rem; }
+			.ikev2-inline-form > .ikev2-device-picker select { width: 100%; }
+			.ikev2-inline-form > .ikev2-device-picker + select {
+				flex: 1 1 18rem;
+				max-width: 24rem;
+			}
 			.ikev2-inline-form > .cbi-button { margin-left: auto; }
 			.ikev2-status-box {
 				margin: .9rem 0 0;

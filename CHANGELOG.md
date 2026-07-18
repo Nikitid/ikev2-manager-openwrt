@@ -2,6 +2,11 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.1.7 - 2026-07-18
+
+- Expanded the connected-device selector so complete device identities remain
+  visible and constrained the routing-mode selector to a practical width.
+
 ## 1.1.6 - 2026-07-18
 
 - Routed Discord's literal UDP voice endpoints through the selected IKEv2
