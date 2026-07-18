@@ -82,6 +82,14 @@ else
 	ip -4 route del default dev ipsec-out table "$ikev2_table_id" 2>/dev/null || true
 fi
 
+# Learn Discord's literal UDP voice endpoints without static service or
+# Cloudflare ranges. The helper derives the current PBR mark and uses the same
+# unreachable tunnel table when the CHILD_SA is unavailable.
+[ ! -x /usr/libexec/ikev2-discord-voice ] ||
+	/usr/libexec/ikev2-discord-voice sync >/dev/null 2>&1 || :
+[ ! -x /usr/libexec/ikev2-device-routing ] ||
+	/usr/libexec/ikev2-device-routing sync >/dev/null 2>&1 || :
+
 return 0
 }
 

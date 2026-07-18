@@ -70,15 +70,33 @@ cat >"$tmp/bin/restart" <<'EOF'
 #!/bin/sh
 [ "${TEST_RESTART_FAIL:-0}" != 1 ]
 EOF
+cat >"$tmp/bin/ip" <<'EOF'
+#!/bin/sh
+case "$*" in
+	'-4 route show default') printf '%s\n' 'default via 198.51.100.1 dev eth1' ;;
+	'-4 neigh show')
+		printf '%s\n' \
+			'198.51.100.1 dev eth1 lladdr 00:00:5e:00:01:01 REACHABLE' \
+			'192.168.1.50 dev br-lan lladdr 02:00:00:00:00:50 REACHABLE' \
+			'192.168.1.51 dev br-lan FAILED'
+		;;
+	*) exit 1 ;;
+esac
+EOF
 chmod 755 "$tmp/bin/uci" "$tmp/bin/ipcalc.sh" "$tmp/bin/restart"
+chmod 755 "$tmp/bin/ip"
+printf '%s\n' '0 02:00:00:00:00:50 192.168.1.50 laptop *' >"$tmp/state/dhcp.leases"
 
 run_device() {
 	PATH="$tmp/bin:$PATH" TEST_STATE="$tmp/state" \
 	IKEV2_RESTART_HELPER="$tmp/bin/restart" \
+	IKEV2_DEVICE_RUNTIME_HELPER="$tmp/bin/restart" \
+	IKEV2_DHCP_LEASES="$tmp/state/dhcp.leases" \
 		sh "$root/luci-ikev2-domains/ikev2-devices.sh" "$@"
 }
 
 run_device dump | grep -Fxq 'addr=192.168.1.50 mode=domain'
+run_device clients | grep -Fxq "192.168.1.50	laptop	02:00:00:00:00:50"
 run_device zones | grep -Fxq 'lan=lan iot'
 run_device zones | grep -Fxq 'wan=wan'
 run_device add-subnet 192.168.1.60

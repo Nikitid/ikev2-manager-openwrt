@@ -22,6 +22,19 @@ Direct-IP service networks and administrator-defined IPv4/CIDR entries use a
 separate PBR destination policy. Both paths share the same covered networks,
 device exclusions and fail-closed routing table.
 
+When Discord is selected, its UDP voice IP-discovery packet is classified
+before routing. The exact destination IPv4 address and UDP port are retained in
+a timeout-backed nftables set and marked for the same fail-closed PBR table.
+This covers literal media endpoints without static Discord or Cloudflare
+address ranges and without routing unrelated traffic hosted by Cloudflare.
+
+Full route and Exclude device overrides are persisted as PBR policies and also
+compiled into the app-owned `inet ikev2_device_policy` nftables table. Its
+prerouting hook runs immediately before PBR and sets the active WAN or
+`pbr_ikev2out` mark. PBR therefore keeps ownership of routing tables and the
+fail-closed default, while a single device change does not require a service,
+DNS, XFRM or tunnel restart.
+
 ## Fail-closed boundary
 
 PBR table `pbr_ikev2out` always contains an unreachable default. A lower-metric

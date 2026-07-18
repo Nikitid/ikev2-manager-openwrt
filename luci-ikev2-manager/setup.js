@@ -92,6 +92,14 @@ function parseDeviceDump(stdout) {
 	return entries;
 }
 
+function parseClients(stdout) {
+	return (stdout || '').replace(/\r/g, '').split('\n').map(function(line) {
+		var fields = line.split('\t');
+		if (!fields[0]) return null;
+		return { addr: fields[0], name: fields[1] || '', mac: fields[2] || '' };
+	}).filter(Boolean);
+}
+
 function validateAddr(addr) {
 	return addr.length > 0 && addr.length < 50 &&
 		/^[0-9.]+(\/[0-9]{1,2})?$/.test(addr);
@@ -268,7 +276,8 @@ return view.extend({
 			L.resolveDefault(fs.exec(helper, [ 'get' ]), { stdout: '' }),
 			L.resolveDefault(fs.exec(helper, [ 'doctor' ]), { stdout: '' }),
 			L.resolveDefault(fs.exec(devicesHelper, [ 'networks' ]), { stdout: '' }),
-			L.resolveDefault(fs.exec(devicesHelper, [ 'dump' ]), { stdout: '' })
+			L.resolveDefault(fs.exec(devicesHelper, [ 'dump' ]), { stdout: '' }),
+			L.resolveDefault(fs.exec(devicesHelper, [ 'clients' ]), { stdout: '' })
 		]);
 	},
 
@@ -300,8 +309,11 @@ return view.extend({
 		});
 	},
 
-	renderExceptions: function(dumpStdout) {
+	renderExceptions: function(dumpStdout, clientsStdout) {
 		var self = this;
+		var clients = parseClients(clientsStdout);
+		var clientsByAddr = {};
+		clients.forEach(function(client) { clientsByAddr[client.addr] = client; });
 		var list = E('div', {}, []);
 		var result = common.inlineResult();
 
@@ -332,8 +344,12 @@ return view.extend({
 				rm.addEventListener('click', function() {
 					self.deviceAction([ 'remove-override', e.addr ], rm, result, refreshList);
 					});
+					var client = clientsByAddr[e.addr];
 					return E('tr', { 'class': 'tr' }, [
-						E('td', { 'class': 'td' }, [ E('code', {}, [ e.addr ]) ]),
+						E('td', { 'class': 'td' }, [
+							client && client.name ? E('strong', {}, [ client.name + ' ' ]) : '',
+							E('code', {}, [ e.addr ])
+						]),
 						E('td', { 'class': 'td' }, [
 							common.pill(e.mode === 'fullroute' ? _('Full route') : _('Exclude'),
 								e.mode === 'fullroute' ? 'good' : 'warn') ]),
@@ -345,7 +361,15 @@ return view.extend({
 		}
 		refreshList(dumpStdout);
 
-		var addr = input('text', '', { 'placeholder': '192.168.2.55' });
+		var deviceChoices = clients.map(function(client) {
+			return {
+				value: client.addr,
+				label: (client.name || _('Connected device')) + ' — ' + client.addr +
+					(client.mac ? ' · ' + client.mac : '')
+			};
+		});
+		var addr = common.choiceWithCustom(deviceChoices.length ? deviceChoices[0].value : '',
+			deviceChoices, { placeholder: '192.168.2.55' });
 		var mode = E('select', { 'class': 'cbi-input-select' }, [
 			E('option', { 'value': 'exclude' }, [ _('Exclude — always use WAN') ]),
 			E('option', { 'value': 'fullroute' }, [ _('Full route — all traffic via VPN') ])
@@ -355,13 +379,13 @@ return view.extend({
 			'type': 'button'
 		}, [ _('Add') ]);
 		add.addEventListener('click', function() {
-			var v = addr.value.trim();
+			var v = addr.value();
 			if (!validateAddr(v)) {
 				result.err(_('Invalid address'));
 				return;
 			}
 			self.deviceAction([ 'add-override', v, mode.value ], add, result, function(stdout) {
-				addr.value = '';
+				addr.setValue(deviceChoices.length ? deviceChoices[0].value : '');
 				refreshList(stdout);
 			});
 		});
@@ -369,7 +393,7 @@ return view.extend({
 		return E('div', {}, [
 			list,
 			E('div', { 'class': 'ikev2-inline-form', 'style': 'margin-top:1rem' }, [
-				addr, mode, result.node, add
+				E('div', { 'class': 'ikev2-device-picker' }, [ addr.node ]), mode, result.node, add
 			])
 		]);
 	},
@@ -579,7 +603,7 @@ return view.extend({
 					])),
 				common.section(_('Device exceptions'),
 					_('Force a device fully through the VPN (Full route) or fully past it (Exclude), regardless of the domain list.'),
-					self.renderExceptions(data[3].stdout)),
+					self.renderExceptions(data[3].stdout, data[4].stdout)),
 				common.section(_('DNS policy'),
 					_('Domain routing is deterministic only when clients use the router resolver. These options take effect only after Apply.'),
 					E('div', {}, [

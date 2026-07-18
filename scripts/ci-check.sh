@@ -29,6 +29,8 @@ node ./scripts/test-luci-users-ui.js
 ./scripts/test-apk-bootstrap.sh
 ./scripts/test-dns-regressions.sh
 ./scripts/test-community-domains.sh
+./scripts/test-discord-voice-routing.sh
+./scripts/test-device-routing.sh
 ./scripts/test-user-credentials.sh
 ./scripts/test-client-transaction.sh
 ./scripts/test-acme-settings.sh

@@ -4,6 +4,7 @@
 #
 # Commands:
 #   dump                         — list current state (domain/fullroute/exclude)
+#   clients                      — list active local IPv4 neighbours
 #   zones                        — list firewall zones and their logical networks
 #   add-subnet    <addr>         — add addr to the base domain policy
 #   remove-subnet <addr>         — remove addr from the base domain policy
@@ -17,6 +18,8 @@ APP_CONFIG='ikev2-manager'
 APP_SECTION='domains'
 DEST_FILES='file:///etc/pbr-ikev2-domains.txt file:///etc/pbr-ikev2-service-cidrs.txt'
 RESTART_HELPER="${IKEV2_RESTART_HELPER:-/usr/libexec/ikev2-domains-restart}"
+DEVICE_RUNTIME_HELPER="${IKEV2_DEVICE_RUNTIME_HELPER:-/usr/libexec/ikev2-device-routing}"
+DHCP_LEASES="${IKEV2_DHCP_LEASES:-/tmp/dhcp.leases}"
 
 valid_addr() {
     [ -n "$1" ] || return 1
@@ -42,22 +45,31 @@ base_pos() {
 
 # Commit, optionally reorder sec before BASE_RULE, then synchronously verify
 # PBR. On any failure put the exact previous UCI package back and re-apply it.
+restart_pbr() {
+	case "${1:-full}" in
+		device) "$DEVICE_RUNTIME_HELPER" sync ;;
+		*)
+			if [ "${IKEV2_ACTION_LOCK_HELD:-0}" = 1 ]; then
+				"$RESTART_HELPER" --wait --lock-held
+			else
+				"$RESTART_HELPER" --wait
+			fi
+			;;
+	esac
+}
+
 restore_pbr() {
-	local backup="$1"
+	local backup="$1" restart_mode="${2:-full}"
 	uci import pbr <"$backup/pbr" >/dev/null 2>&1 || true
 	uci import "$APP_CONFIG" <"$backup/app" >/dev/null 2>&1 || true
 	uci commit pbr >/dev/null 2>&1 || true
 	uci commit "$APP_CONFIG" >/dev/null 2>&1 || true
-	if [ "${IKEV2_ACTION_LOCK_HELD:-0}" = 1 ]; then
-		"$RESTART_HELPER" --wait --lock-held >/dev/null 2>&1 || true
-	else
-		"$RESTART_HELPER" --wait >/dev/null 2>&1 || true
-	fi
+	restart_pbr "$restart_mode" >/dev/null 2>&1 || true
 	rm -rf "$backup"
 }
 
 commit_and_restart() {
-	local backup="$1" sec="${2:-}" pos result=0
+	local backup="$1" sec="${2:-}" restart_mode="${3:-full}" pos result=0
 	uci commit pbr || result=1
 	uci commit "$APP_CONFIG" || result=1
 	if [ -n "$sec" ]; then
@@ -70,14 +82,10 @@ commit_and_restart() {
 		fi
     fi
     if [ "$result" = 0 ]; then
-        if [ "${IKEV2_ACTION_LOCK_HELD:-0}" = 1 ]; then
-            "$RESTART_HELPER" --wait --lock-held || result=1
-        else
-            "$RESTART_HELPER" --wait || result=1
-        fi
+		restart_pbr "$restart_mode" || result=1
 	fi
 	if [ "$result" != 0 ]; then
-		restore_pbr "$backup"
+		restore_pbr "$backup" "$restart_mode"
 		return 1
     fi
 	rm -rf "$backup"
@@ -219,7 +227,7 @@ cmd_add_override() {
 			;;
 	esac
     # commit_and_restart with sec triggers uci reorder to place before BASE_RULE
-    commit_and_restart "$backup" "$sec"
+    commit_and_restart "$backup" "$sec" device
 }
 
 cmd_remove_override() {
@@ -229,7 +237,39 @@ cmd_remove_override() {
     backup="$(backup_pbr)" || return 1
     uci -q delete "pbr.$(fr_sec "$addr")" 2>/dev/null || true
     uci -q delete "pbr.$(ex_sec "$addr")" 2>/dev/null || true
-    commit_and_restart "$backup"
+	commit_and_restart "$backup" '' device
+}
+
+# Active local IPv4 neighbours, enriched with DHCP lease names. The WAN next
+# hop and unresolved entries are excluded; the UI retains a Custom option for
+# sleeping, static or routed clients that are not visible at this moment.
+cmd_clients() {
+	local tmp wan_device
+	tmp="$(mktemp)" || return 1
+	trap 'rm -f "$tmp"' EXIT INT TERM
+	wan_device="$(ip -4 route show default 2>/dev/null |
+		sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -n1)"
+	ip -4 neigh show 2>/dev/null >"$tmp"
+	awk -v wan="$wan_device" '
+		NR == FNR {
+			if (NF >= 4) { lease_mac[$3] = $2; lease_name[$3] = $4 }
+			next
+		}
+		{
+			ip = $1; dev = ""; mac = ""; state = $NF
+			for (i = 2; i <= NF; i++) {
+				if ($i == "dev" && i < NF) dev = $(i + 1)
+				if ($i == "lladdr" && i < NF) mac = $(i + 1)
+			}
+			if (dev == "" || dev == wan || dev == "lo" || dev == "ipsec-in" ||
+			    mac == "" || state == "FAILED" || state == "INCOMPLETE") next
+			name = lease_name[ip]
+			if (name == "*" || name == "-") name = ""
+			if (mac == "") mac = lease_mac[ip]
+			printf "%s\t%s\t%s\n", ip, name, mac
+		}' "$DHCP_LEASES" "$tmp" 2>/dev/null | sort -t . -k1,1n -k2,2n -k3,3n -k4,4n
+	rm -f "$tmp"
+	trap - EXIT INT TERM
 }
 
 # List logical OpenWrt networks that have an IPv4 subnet, as name=CIDR lines.
@@ -269,6 +309,7 @@ cmd_zones() {
 
 case "${1:-}" in
     dump)             cmd_dump ;;
+	clients)          cmd_clients ;;
     networks)         cmd_networks ;;
 	zones)            cmd_zones ;;
     add-subnet)       cmd_add_subnet "${2:-}" ;;
@@ -276,6 +317,6 @@ case "${1:-}" in
     add-override)     cmd_add_override "${2:-}" "${3:-}" ;;
     remove-override)  cmd_remove_override "${2:-}" ;;
     *)
-        printf 'usage: %s {dump|networks|zones|add-subnet <addr>|remove-subnet <addr>|add-override <addr> <mode>|remove-override <addr>}\n' "$0" >&2
+        printf 'usage: %s {dump|clients|networks|zones|add-subnet <addr>|remove-subnet <addr>|add-override <addr> <mode>|remove-override <addr>}\n' "$0" >&2
         exit 1 ;;
 esac

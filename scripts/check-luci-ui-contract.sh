@@ -64,6 +64,8 @@ grep -Fq "routerPorts.disabled = !allowRouter.checked || allowAllRouterPorts.che
 	'luci-ikev2-manager/settings.js'
 grep -Fq "Keep LuCI and SSH ports in this list" 'luci-ikev2-manager/settings.js'
 grep -Fq '"/usr/libexec/ikev2-devices zones": [ "exec" ]' "$acl"
+grep -Fq '"/usr/libexec/ikev2-devices clients": [ "exec" ]' "$acl"
+grep -Fq "common.choiceWithCustom(deviceChoices.length" 'luci-ikev2-manager/setup.js'
 grep -Fq "common.multiChoiceWithCustom(access.lan_zones" \
 	'luci-ikev2-manager/settings.js'
 grep -Fq "addressPlanPicker" 'luci-ikev2-manager/settings.js'

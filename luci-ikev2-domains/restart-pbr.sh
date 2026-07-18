@@ -13,6 +13,7 @@ xfrm_init="${IKEV2_XFRM_INIT:-/etc/init.d/ikev2-xfrm}"
 pbr_init="${IKEV2_PBR_INIT:-/etc/init.d/pbr}"
 sync_vips_helper="${IKEV2_SYNC_VIPS:-/usr/libexec/ikev2-sync-vips}"
 pbr_user_helper="${IKEV2_PBR_USER:-/usr/share/pbr/pbr.user.ikev2out}"
+discord_voice_helper="${IKEV2_DISCORD_VOICE:-/usr/libexec/ikev2-discord-voice}"
 
 . "$runtime_lib_dir/actions.sh"
 . "$runtime_lib_dir/routing.sh"
@@ -89,6 +90,7 @@ perform_restart() {
 		"$sync_vips_helper" || return 1
 	fi
 	"$pbr_user_helper" || return 1
+	[ ! -x "$discord_voice_helper" ] || "$discord_voice_helper" sync || return 1
 	drop_reclassified_connections
 }
 

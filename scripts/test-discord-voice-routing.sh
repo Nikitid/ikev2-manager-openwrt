@@ -1,0 +1,104 @@
+#!/bin/sh
+
+set -eu
+
+root="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
+helper="$root/ikev2-manager-runtime/ikev2-discord-voice.sh"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT INT TERM
+mkdir -p "$tmp/bin"
+
+cat >"$tmp/bin/uci" <<'EOF'
+#!/bin/sh
+case "$*" in
+	'-q get ikev2-manager.globals.configured') echo 1 ;;
+	'-q get pbr.ikev2pbr_domains.src_addr') echo '@br-lan 192.168.50.4' ;;
+	'show pbr')
+		echo 'pbr.ikev2pbr_domains=policy'
+		echo 'pbr.pbr_dev_ex_192_168_50_9=policy'
+		;;
+	'-q get pbr.ikev2pbr_domains.name') echo 'IKEv2 PBR domains' ;;
+	'-q get pbr.pbr_dev_ex_192_168_50_9.name') echo 'VPN Exclude: 192.168.50.9' ;;
+	'-q get pbr.pbr_dev_ex_192_168_50_9.src_addr') echo '192.168.50.9' ;;
+	*) exit 1 ;;
+esac
+EOF
+
+cat >"$tmp/bin/ip" <<'EOF'
+#!/bin/sh
+[ "$*" = '-4 rule show' ] || exit 1
+echo '30000: from all fwmark 0x20000/0xff0000 lookup pbr_ikev2out'
+EOF
+
+cat >"$tmp/bin/ipcalc.sh" <<'EOF'
+#!/bin/sh
+case "$1" in
+	192.168.50.4/32 | 192.168.50.9/32) exit 0 ;;
+	*) exit 1 ;;
+esac
+EOF
+
+cat >"$tmp/bin/nft" <<'EOF'
+#!/bin/sh
+case "$*" in
+	'list table inet ikev2_discord_voice_test')
+		[ -s "$TEST_NFT_STATE" ] || exit 1
+		cat "$TEST_NFT_RULESET"
+		;;
+	'list chain inet ikev2_discord_voice_test prerouting')
+		[ -s "$TEST_NFT_STATE" ] || exit 1
+		cat "$TEST_NFT_RULESET"
+		;;
+	'delete table inet ikev2_discord_voice_test')
+		rm -f "$TEST_NFT_STATE"
+		;;
+	'-c -f '*) exit 0 ;;
+	'-f '*)
+		cp "$2" "$TEST_NFT_RULESET"
+		printf x >"$TEST_NFT_STATE"
+		printf 'apply\n' >>"$TEST_NFT_LOG"
+		;;
+	*) exit 1 ;;
+esac
+EOF
+chmod 755 "$tmp/bin/uci" "$tmp/bin/ip" "$tmp/bin/ipcalc.sh" "$tmp/bin/nft"
+
+printf 'discord\n' >"$tmp/selected"
+: >"$tmp/nft.log"
+export PATH="$tmp/bin:$PATH"
+export TEST_NFT_STATE="$tmp/nft.state"
+export TEST_NFT_RULESET="$tmp/rules.nft"
+export TEST_NFT_LOG="$tmp/nft.log"
+export IKEV2_SELECTED_SERVICES="$tmp/selected"
+export IKEV2_NFT="$tmp/bin/nft"
+export IKEV2_DISCORD_TABLE='ikev2_discord_voice_test'
+export IKEV2_DISCORD_SIGNATURE="$tmp/signature"
+
+"$helper" sync
+grep -Fq 'chain ikev2_manager_owned' "$tmp/rules.nft"
+grep -Fq 'elements = { "br-lan" }' "$tmp/rules.nft"
+grep -Fq 'elements = { 192.168.50.4 }' "$tmp/rules.nft"
+grep -Fq 'elements = { 192.168.50.9 }' "$tmp/rules.nft"
+grep -Fq 'type ipv4_addr . inet_service' "$tmp/rules.nft"
+grep -Fq 'udp length 82 @th,64,32 0x00010046' "$tmp/rules.nft"
+grep -Fq 'ip daddr . udp dport @voice_endpoints update @voice_endpoints' "$tmp/rules.nft"
+grep -Fq 'update @voice_endpoints { ip daddr . udp dport timeout 6h }' "$tmp/rules.nft"
+grep -Fq 'meta mark & 0xff00ffff | 0x00020000' "$tmp/rules.nft"
+if grep -Eq '104\.25\.158\.178|104\.16\.0\.0|162\.159\.0\.0' "$tmp/rules.nft"; then
+	echo 'Discord voice routing contains a static Cloudflare address' >&2
+	exit 1
+fi
+"$helper" check
+
+"$helper" sync
+[ "$(wc -l <"$tmp/nft.log" | tr -d ' ')" = 1 ] || {
+	echo 'unchanged Discord voice policy was reinstalled' >&2
+	exit 1
+}
+
+: >"$tmp/selected"
+"$helper" sync
+[ ! -e "$tmp/nft.state" ]
+[ ! -e "$tmp/signature" ]
+
+printf '%s\n' 'Discord voice routing checks OK'

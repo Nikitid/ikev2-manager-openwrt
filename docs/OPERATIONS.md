@@ -79,6 +79,26 @@ update so they cannot retain an older WAN route.
 Clients must use router DNS for domain routing. Custom IPv4/CIDR entries and
 direct-service networks do not depend on DNS.
 
+For the selected Discord service, literal UDP voice endpoints are learned from
+Discord's IP-discovery packet and routed as exact IPv4-address/port pairs. The
+runtime set is rebuilt automatically after a policy or firewall restart:
+
+```sh
+/usr/libexec/ikev2-discord-voice status
+nft list set inet ikev2_discord_voice voice_endpoints
+```
+
+Full route and Exclude rules are applied atomically and can be checked without
+restarting PBR:
+
+```sh
+/usr/libexec/ikev2-device-routing check
+nft list table inet ikev2_device_policy
+```
+
+The LuCI picker lists active local IPv4 neighbours and enriches them with DHCP
+names. Use Custom for a sleeping client, a static address or a subnet.
+
 ## Background actions
 
 Long LuCI operations continue in serialized workers:

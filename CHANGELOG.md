@@ -2,6 +2,16 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.1.6 - 2026-07-18
+
+- Routed Discord's literal UDP voice endpoints through the selected IKEv2
+  policy by learning exact address/port pairs from voice IP discovery, avoiding
+  static Discord or Cloudflare address ranges.
+- Replaced manual Full route and Exclude address entry with a connected-device
+  picker and an explicit Custom fallback.
+- Applied device policies atomically through an app-owned nftables classifier,
+  without restarting PBR, DNS, XFRM or either IKEv2 tunnel.
+
 ## 1.1.5 - 2026-07-17
 
 - Reworked detected network and firewall-zone selectors into consistent

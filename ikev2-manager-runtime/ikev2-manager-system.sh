@@ -1980,6 +1980,12 @@ restore_uci_state() {
 }
 
 remove_managed() {
+	if [ -x /usr/libexec/ikev2-device-routing ]; then
+		/usr/libexec/ikev2-device-routing stop >/dev/null 2>&1 || return 1
+	fi
+	if [ -x /usr/libexec/ikev2-discord-voice ]; then
+		/usr/libexec/ikev2-discord-voice stop >/dev/null 2>&1 || return 1
+	fi
 	if [ -x /usr/libexec/ikev2-domain-router ]; then
 		/usr/libexec/ikev2-domain-router deactivate >/dev/null 2>&1 || return 1
 	fi

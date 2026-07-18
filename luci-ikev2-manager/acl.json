@@ -10,6 +10,7 @@
 				"/tmp/ikev2-domains-community.status": [ "read" ],
 				"/tmp/ikev2-manager-deps.status": [ "read" ],
 				"/usr/libexec/ikev2-devices networks": [ "exec" ],
+				"/usr/libexec/ikev2-devices clients": [ "exec" ],
 				"/usr/libexec/ikev2-devices zones": [ "exec" ],
 				"/usr/libexec/ikev2-devices dump": [ "exec" ],
 				"/usr/libexec/ikev2-domains-community catalog": [ "exec" ],

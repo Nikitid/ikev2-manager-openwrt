@@ -102,6 +102,20 @@ ensure_service_cidr_policy() {
 	/usr/libexec/ikev2-domains-restart >/dev/null 2>&1 || :
 }
 
+ensure_discord_voice_policy() {
+	[ -x /usr/libexec/ikev2-discord-voice ] || return 0
+	/usr/libexec/ikev2-discord-voice check >/dev/null 2>&1 && return 0
+	[ ! -d /var/run/ikev2-action.lock ] || return 0
+	/usr/libexec/ikev2-discord-voice sync >/dev/null 2>&1 || :
+}
+
+ensure_device_routing_policy() {
+	[ -x /usr/libexec/ikev2-device-routing ] || return 0
+	/usr/libexec/ikev2-device-routing check >/dev/null 2>&1 && return 0
+	[ ! -d /var/run/ikev2-action.lock ] || return 0
+	/usr/libexec/ikev2-device-routing sync >/dev/null 2>&1 || :
+}
+
 # Persist once during an orderly reboot/service stop. Keeping the hot runtime
 # dump in /var/run avoids flash writes every 15 seconds, while the shutdown
 # snapshot lets warm client DNS caches survive the next boot without leaking.
@@ -119,6 +133,8 @@ while true; do
 		/usr/libexec/ikev2-domain-router ensure >/dev/null 2>&1 || :
 	fi
 	ensure_service_cidr_policy
+	ensure_discord_voice_policy
+	ensure_device_routing_policy
 
 	/etc/init.d/ikev2-xfrm start
 
