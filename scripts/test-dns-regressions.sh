@@ -6,6 +6,8 @@ root="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
 client="$root/luci-ikev2-manager/client.js"
 system="$root/ikev2-manager-runtime/ikev2-manager-system.sh"
 config="$root/openwrt/files/etc/config/ikev2-manager"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT INT TERM
 
 grep -Fq "configuredDnsValue(dnsValue, 'fallback', 'current_fallback', '')" "$client"
 if grep -Fq "dnsValue.fallback || dnsValue.current_fallback" "$client"; then
@@ -43,5 +45,40 @@ grep -Fq 'ip -6 route replace unreachable default metric 32767' \
 grep -Fq "field in engine service dnsmasq_upstream dnsmasq_cache nft rule healthy state message" "$system"
 grep -Fq "Reliable-mode nftables rules are missing." \
 	"$root/luci-ikev2-manager/setup.js"
+
+mkdir -p "$tmp/bin" "$tmp/work"
+cat >"$tmp/bin/uci" <<'EOF'
+#!/bin/sh
+[ "${1:-}" != -q ] || shift
+command="${1:-}"
+shift || true
+case "$command:$*" in
+	'get:ikev2-manager.domains') echo domains ;;
+	'get:ikev2-manager.domains.engine') echo fakeip ;;
+	'get:ikev2-manager.domains.fakeip_ttl') echo 60 ;;
+	'get:ikev2-manager.domains.cache_path') echo /tmp/fakeip-cache.db ;;
+	'get:ikev2-manager.domains.dns_saved') echo 1 ;;
+	'get:ikev2-manager.domains.prev_server') echo 1.1.1.1#53 ;;
+	'get:ikev2-manager.domains.prev_noresolv') echo 1 ;;
+	'get:ikev2-manager.globals.source_include_vpn') echo 0 ;;
+	'get:ikev2-manager.server.enabled') echo 0 ;;
+	'get:pbr.ikev2pbr_domains.src_addr') echo 192.168.1.0/24 ;;
+	'show:pbr') ;;
+	*) exit 1 ;;
+esac
+EOF
+chmod 755 "$tmp/bin/uci"
+printf '%s\n' example.com >"$tmp/domains.txt"
+PATH="$tmp/bin:$PATH" \
+IKEV2_RUNTIME_LIB_DIR="$root/ikev2-manager-runtime/lib" \
+IKEV2_DOMAIN_FILE="$tmp/domains.txt" \
+IKEV2_DOMAIN_CONFIG="$tmp/domain-router.json" \
+IKEV2_DOMAIN_RULESET="$tmp/domain-router-rules.json" \
+IKEV2_DOMAIN_WORK_DIR="$tmp/work" \
+	sh "$root/ikev2-manager-runtime/ikev2-domain-router.sh" render
+jq -e . "$tmp/domain-router.json" >/dev/null
+grep -Fq '"tag": "tproxy-direct-in"' "$tmp/domain-router.json"
+grep -A4 -F '"inbound": [ "tproxy-direct-in" ]' "$tmp/domain-router.json" |
+	grep -Fq '"outbound": "direct-out"'
 
 printf '%s\n' 'DNS and reliable-mode regression checks OK'

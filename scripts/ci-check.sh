@@ -32,6 +32,7 @@ node ./scripts/test-luci-users-ui.js
 ./scripts/test-discord-voice-routing.sh
 ./scripts/test-device-routing.sh
 ./scripts/test-user-credentials.sh
+./scripts/test-user-policy.sh
 ./scripts/test-client-transaction.sh
 ./scripts/test-acme-settings.sh
 ./scripts/test-server-transaction.sh

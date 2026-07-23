@@ -614,7 +614,7 @@ return view.extend({
 
 		var accessPanel = disclosure(
 			_('Client routes and access'),
-			_('Choose what clients send through IKEv2 and where that traffic may go.'),
+			_('Choose global defaults for inbound clients. Individual overrides are configured on the VPN Users page.'),
 			E('div', {}, [
 				E('div', { 'class': 'ikev2-form-grid ikev2-form-grid-compact' }, [
 					common.fieldLabel(_('Advertised IPv4 destinations'),

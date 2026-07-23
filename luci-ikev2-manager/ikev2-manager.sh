@@ -79,7 +79,7 @@ swanctl_quiet() {
 }
 
 consume_user_input() {
-	local extra user_count
+	local extra user_count normalized_targets normalized_ports policy_supplied
 	[ -f "$user_input_file" ] || die 'User input is missing'
 	[ ! -L "$user_input_file" ] || die 'User input must not be a symbolic link'
 	input_bytes="$(wc -c <"$user_input_file" | tr -d ' ')"
@@ -92,12 +92,29 @@ consume_user_input() {
 	action="$(sed -n '1p' "$user_input_file")"
 	user="$(sed -n '2p' "$user_input_file")"
 	password="$(sed -n '3p' "$user_input_file")"
-	extra="$(sed -n '4,$p' "$user_input_file" | sed '/^[[:space:]]*$/d')"
+	router_access="$(sed -n '4p' "$user_input_file")"
+	internet_access="$(sed -n '5p' "$user_input_file")"
+	lan_access="$(sed -n '6p' "$user_input_file")"
+	pbr_mode="$(sed -n '7p' "$user_input_file")"
+	lan_targets="$(sed -n '8p' "$user_input_file")"
+	public_ports="$(sed -n '9p' "$user_input_file")"
+	if [ -n "$router_access$internet_access$lan_access$pbr_mode$lan_targets$public_ports" ]; then
+		policy_supplied=1
+	else
+		policy_supplied=0
+	fi
+	extra="$(sed -n '10,$p' "$user_input_file" | sed '/^[[:space:]]*$/d')"
 	rm -f "$user_input_file"
 	[ -z "$extra" ] || die 'User input contains unexpected fields'
-	[ "$action" = add ] || [ "$action" = password ] || die 'Invalid user action'
+	[ "$action" = add ] || [ "$action" = password ] || [ "$action" = policy ] ||
+		die 'Invalid user action'
 	valid_user "$user" || die 'Invalid username'
-	valid_password "$password" || die 'Password must be 1-256 characters without control characters'
+	if [ "$action" = add ] || [ "$action" = password ]; then
+		valid_password "$password" ||
+			die 'Password must be 1-256 characters without control characters'
+	else
+		[ -z "$password" ] || die 'Policy input must not contain a password'
+	fi
 	if [ "$action" = add ] && user_exists "$user"; then
 		die 'VPN user already exists'
 	fi
@@ -108,7 +125,42 @@ consume_user_input() {
 	if [ "$action" = password ] && ! user_exists "$user"; then
 		die 'VPN user does not exist'
 	fi
+	if [ "$action" = policy ] && ! user_exists "$user"; then
+		die 'VPN user does not exist'
+	fi
+	if [ "$action" = password ]; then
+		[ -z "$router_access$internet_access$lan_access$pbr_mode$lan_targets$public_ports" ] ||
+			die 'Password input contains unexpected policy fields'
+	fi
+	if [ "$action" = add ] || [ "$action" = policy ]; then
+		router_access="${router_access:-inherit}"
+		internet_access="${internet_access:-inherit}"
+		lan_access="${lan_access:-inherit}"
+		pbr_mode="${pbr_mode:-inherit}"
+		normalized_targets="$(normalize_user_targets "$lan_targets")" ||
+			die 'Local targets must contain IPv4 addresses or CIDR networks'
+		lan_targets="$normalized_targets"
+		normalized_ports="$(normalize_list "$public_ports")"
+		valid_port_list "$normalized_ports" ||
+			die 'Public router ports must contain valid TCP/UDP ports or ranges'
+		public_ports="$normalized_ports"
+		validate_user_policy "$router_access" "$internet_access" "$lan_access" \
+			"$pbr_mode" "$lan_targets" "$public_ports"
+	fi
+	if [ "$action" = policy ]; then
+		update_user_policy_transaction "$user" "$router_access" "$internet_access" \
+			"$lan_access" "$pbr_mode" "$lan_targets" "$public_ports" ||
+			die 'Unable to apply VPN user policy; previous policy was restored'
+		return 0
+	fi
 	encoded="$(printf '%s' "$password" | openssl base64 -A)"
+	if [ "$action" = add ] && [ "$policy_supplied" = 1 ]; then
+		add_user_with_policy_transaction "$user" "0s$encoded" \
+			"$router_access" "$internet_access" "$lan_access" \
+			"$pbr_mode" "$lan_targets" "$public_ports" ||
+			die 'Unable to apply VPN user policy; the new user was removed'
+		return 0
+	fi
 	update_user "$user" "0s$encoded"
 }
 
@@ -297,6 +349,23 @@ ipv4_to_uint() {
 	printf '%s\n' "$1" | awk -F. '{ print ((($1 * 256 + $2) * 256 + $3) * 256 + $4) }'
 }
 
+canonical_ipv4_cidr() {
+	printf '%s\n' "$1" | awk -F'[./]' '
+		NF == 5 {
+			value = ((($1 * 256 + $2) * 256 + $3) * 256 + $4)
+			block = 2 ^ (32 - $5)
+			network = int(value / block) * block
+			a = int(network / 16777216)
+			network -= a * 16777216
+			b = int(network / 65536)
+			network -= b * 65536
+			c = int(network / 256)
+			d = network - c * 256
+			printf "%.0f.%.0f.%.0f.%.0f/%s\n", a, b, c, d, $5
+		}
+	'
+}
+
 valid_server_pool_layout() {
 	pool="$1"
 	gateway_cidr="$2"
@@ -355,6 +424,46 @@ valid_ipv4_cidr_list() {
 		[ "$count" -le 32 ] || return 1
 		valid_ipv4_cidr "$cidr" || return 1
 	done
+}
+
+normalize_user_targets() {
+	value="$(normalize_list "$1")"
+	[ -n "$value" ] || return 0
+	count=0
+	normalized=''
+	for target in $value; do
+		count=$((count + 1))
+		[ "$count" -le 64 ] || return 1
+		if valid_ipv4 "$target"; then
+			target="$target/32"
+		elif valid_ipv4_cidr "$target"; then
+			target="$(canonical_ipv4_cidr "$target")"
+		else
+			return 1
+		fi
+		normalized="${normalized:+$normalized }$target"
+	done
+	printf '%s\n' "$normalized"
+}
+
+validate_user_policy() {
+	router="$1"
+	internet="$2"
+	lan="$3"
+	pbr="$4"
+	targets="$5"
+	public_ports="$6"
+	case "$router" in inherit | allow | deny) ;; *) die 'Invalid router access mode' ;; esac
+	case "$internet" in inherit | allow | deny) ;; *) die 'Invalid Internet access mode' ;; esac
+	case "$lan" in inherit | all | limited | deny) ;; *) die 'Invalid local network access mode' ;; esac
+	case "$pbr" in inherit | exclude) ;; *) die 'Invalid PBR mode' ;; esac
+	if [ "$lan" = limited ]; then
+		[ -n "$targets" ] || die 'Limited local access requires at least one IPv4 target'
+	else
+		[ -z "$targets" ] || die 'Local targets are valid only for limited local access'
+	fi
+	valid_port_list "$public_ports" ||
+		die 'Invalid public router port list'
 }
 
 valid_name() {
@@ -684,6 +793,144 @@ reload_credentials() {
 user_exists() {
 	awk -F '\t' -v user="$1" '$1 == user { found = 1 } END { exit found ? 0 : 1 }' \
 		"$users_db"
+}
+
+user_policy_section() {
+	printf 'user_%s\n' "$(printf '%s' "$1" | sha256sum |
+		awk '{ print substr($1, 1, 16) }')"
+}
+
+user_policy_value() {
+	local user="$1" option="$2" fallback="$3" section saved_user value
+	section="$(user_policy_section "$user")"
+	saved_user="$(uci -q get "$uci_config.$section.username" 2>/dev/null || true)"
+	if [ "$saved_user" = "$user" ]; then
+		value="$(uci -q get "$uci_config.$section.$option" 2>/dev/null || true)"
+	else
+		value=''
+	fi
+	printf '%s\n' "${value:-$fallback}"
+}
+
+save_user_policy() {
+	local user="$1" router="$2" internet="$3" lan="$4" pbr="$5" targets="$6" public_ports="$7"
+	local section saved_user
+	section="$(user_policy_section "$user")"
+	saved_user="$(uci -q get "$uci_config.$section.username" 2>/dev/null || true)"
+	if [ -n "$saved_user" ] && [ "$saved_user" != "$user" ]; then
+		printf '%s\n' 'VPN user policy identifier collision' >&2
+		return 1
+	fi
+	uci set "$uci_config.$section=user_policy" || return 1
+	uci set "$uci_config.$section.username=$user" || return 1
+	uci set "$uci_config.$section.router_access=$router" || return 1
+	uci set "$uci_config.$section.internet_access=$internet" || return 1
+	uci set "$uci_config.$section.lan_access=$lan" || return 1
+	uci set "$uci_config.$section.pbr_mode=$pbr" || return 1
+	uci set "$uci_config.$section.lan_targets=$targets" || return 1
+	uci set "$uci_config.$section.public_ports=$public_ports" || return 1
+	uci commit "$uci_config"
+}
+
+apply_user_policy_runtime() {
+	[ "$(uci -q get "$uci_config.globals.configured" 2>/dev/null || echo 0)" = 1 ] ||
+		return 0
+	[ "$(uci -q get "$uci_config.server.enabled" 2>/dev/null || echo 0)" = 1 ] ||
+		return 0
+	"$system_helper" access-apply
+}
+
+restore_user_policy_backup() {
+	local backup="$1"
+	uci -q revert "$uci_config" >/dev/null 2>&1 || true
+	cp -p "$backup" "$uci_config_dir/$uci_config"
+}
+
+add_user_with_policy_transaction() {
+	local user="$1" secret="$2" router="$3" internet="$4" lan="$5" pbr="$6" targets="$7"
+	local public_ports="$8"
+	local backup rollback_policy
+	backup="$(mktemp)" || return 1
+	cp -p "$uci_config_dir/$uci_config" "$backup" || {
+		rm -f "$backup"
+		return 1
+	}
+	rollback_policy=1
+	trap '
+		if [ "$rollback_policy" = 1 ]; then
+			restore_user_policy_backup "$backup" >/dev/null 2>&1 || true
+		fi
+		rm -f "$backup"
+	' EXIT
+	if ! save_user_policy "$user" "$router" "$internet" "$lan" "$pbr" "$targets" \
+		"$public_ports"; then
+		restore_user_policy_backup "$backup" >/dev/null 2>&1 || true
+		rm -f "$backup"
+		trap - EXIT
+		return 1
+	fi
+	# Store the restrictive policy before loading the credential. A concurrent
+	# health refresh can therefore never admit a new identity under global
+	# defaults during the add operation.
+	update_user "$user" "$secret"
+	if apply_user_policy_runtime; then
+		rollback_policy=0
+		trap - EXIT
+		rm -f "$backup"
+		return 0
+	fi
+	# If credential removal itself fails, keep the restrictive policy instead
+	# of restoring global inheritance for a credential that may still exist.
+	rollback_policy=0
+	delete_user "$user"
+	restored=0
+	restore_user_policy_backup "$backup" && restored=1
+	rm -f "$backup"
+	trap - EXIT
+	[ "$restored" = 1 ] || return 1
+	apply_user_policy_runtime >/dev/null 2>&1 || return 1
+	return 1
+}
+
+update_user_policy_transaction() {
+	local user="$1" router="$2" internet="$3" lan="$4" pbr="$5" targets="$6"
+	local public_ports="$7"
+	local backup restored
+	backup="$(mktemp)" || return 1
+	cp -p "$uci_config_dir/$uci_config" "$backup" || {
+		rm -f "$backup"
+		return 1
+	}
+	if save_user_policy "$user" "$router" "$internet" "$lan" "$pbr" "$targets" \
+		"$public_ports" &&
+	   apply_user_policy_runtime; then
+		rm -f "$backup"
+		return 0
+	fi
+	restored=0
+	uci -q revert "$uci_config" >/dev/null 2>&1 || true
+	cp -p "$backup" "$uci_config_dir/$uci_config" && restored=1
+	rm -f "$backup"
+	[ "$restored" = 1 ] || return 1
+	apply_user_policy_runtime >/dev/null 2>&1 || return 1
+	return 1
+}
+
+delete_user_policy() {
+	local user="$1" section saved_user
+	section="$(user_policy_section "$user")"
+	saved_user="$(uci -q get "$uci_config.$section.username" 2>/dev/null || true)"
+	[ "$saved_user" = "$user" ] || return 0
+	uci -q delete "$uci_config.$section" || return 1
+	uci commit "$uci_config" || return 1
+	apply_user_policy_runtime
+}
+
+delete_user_account() {
+	local user="$1"
+	delete_user "$user"
+	delete_user_policy "$user" ||
+		die 'VPN user was deleted, but live access rules could not be refreshed'
 }
 
 restore_user_files() {
@@ -1833,7 +2080,14 @@ show_users() {
 		[ -n "$user" ] || continue
 		# Passwords remain available to strongSwan locally, but are write-only
 		# through LuCI/RPC so a read action never returns them to the browser.
-		printf '%s\n' "$user"
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$user" \
+			"$(user_policy_value "$user" router_access inherit)" \
+			"$(user_policy_value "$user" internet_access inherit)" \
+			"$(user_policy_value "$user" lan_access inherit)" \
+			"$(user_policy_value "$user" pbr_mode inherit)" \
+			"$(user_policy_value "$user" lan_targets '')" \
+			"$(user_policy_value "$user" public_ports '')"
 	done <"$users_db"
 }
 
@@ -2133,7 +2387,7 @@ case "${1:-}" in
 	user-delete)
 		user="${2:-}"
 		valid_user "$user" || die 'Invalid username'
-		delete_user "$user"
+		delete_user_account "$user"
 		;;
 	disconnect)
 		id="${2:-}"

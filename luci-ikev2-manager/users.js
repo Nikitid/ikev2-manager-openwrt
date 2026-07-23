@@ -40,7 +40,9 @@ function sessionsByUser(sas) {
 function loadUsers() {
 	return Promise.all([
 		fs.exec(helper, [ 'users-show' ]),
-		L.resolveDefault(fs.exec('/usr/sbin/swanmon', [ 'list-sas' ]), { stdout: '' })
+		L.resolveDefault(fs.exec('/usr/sbin/swanmon', [ 'list-sas' ]), { stdout: '' }),
+		L.resolveDefault(fs.exec(helper, [ 'server-access-get' ]), { stdout: '' }),
+		L.resolveDefault(fs.exec(helper, [ 'server-get' ]), { stdout: '' })
 	]);
 }
 
@@ -58,8 +60,13 @@ function runUserAction(button, args, result, success, opts) {
 	});
 }
 
-function runUserSecretAction(button, action, user, password, result, success, onSuccess) {
-	var payload = [ action, user, password ].join('\n') + '\n';
+function runUserInputAction(button, action, user, password, policy, result, success, onSuccess) {
+	var fields = [ action, user, password || '' ];
+	if (policy) {
+		fields.push(policy.routerAccess, policy.internetAccess, policy.lanAccess,
+			policy.pbrMode, policy.lanTargets || '', policy.publicPorts || '');
+	}
+	var payload = fields.join('\n') + '\n';
 	var token = common.inputToken();
 	return fs.write('/var/run/ikev2-manager-user-' + token + '.in', payload, 384 /* 0600 */).then(function() {
 		return runUserAction(button, [ 'user-secret-set', token ], result, success, {
@@ -68,6 +75,116 @@ function runUserSecretAction(button, action, user, password, result, success, on
 	}, function(error) {
 		result.err(_('Unable to save the VPN user: %s').format(error.message || error));
 	});
+}
+
+function policySelect(value, choices) {
+	return E('select', {
+		'class': 'cbi-input-select',
+		'value': value
+	}, choices.map(function(choice) {
+		return E('option', {
+			'value': choice.value,
+			'selected': choice.value === value ? '' : null
+		}, [ choice.label ]);
+	}));
+}
+
+function normalizePortList(value) {
+	return String(value || '').trim().split(/[\s,]+/).filter(Boolean).join(' ');
+}
+
+function validPortList(value) {
+	var items = normalizePortList(value).split(/\s+/).filter(Boolean);
+	if (items.length > 64)
+		return false;
+	return items.every(function(item) {
+		var match = item.match(/^([0-9]+)(?:-([0-9]+))?$/);
+		if (!match)
+			return false;
+		var start = Number(match[1]);
+		var end = match[2] ? Number(match[2]) : start;
+		return start >= 1 && start <= 65535 && end >= start && end <= 65535;
+	});
+}
+
+function policyEditor(entry) {
+	entry = entry || {};
+	var routerAccess = policySelect(entry.routerAccess || 'inherit', [
+		{ value: 'inherit', label: _('Use global setting') },
+		{ value: 'allow', label: _('Allow') },
+		{ value: 'deny', label: _('Deny') }
+	]);
+	var internetAccess = policySelect(entry.internetAccess || 'inherit', [
+		{ value: 'inherit', label: _('Use global setting') },
+		{ value: 'allow', label: _('Allow') },
+		{ value: 'deny', label: _('Deny') }
+	]);
+	var lanAccess = policySelect(entry.lanAccess || 'inherit', [
+		{ value: 'inherit', label: _('Use global setting') },
+		{ value: 'all', label: _('All local networks') },
+		{ value: 'limited', label: _('Only selected addresses') },
+		{ value: 'deny', label: _('Deny') }
+	]);
+	var lanTargets = E('textarea', {
+		'class': 'cbi-input-textarea',
+		'rows': '3',
+		'placeholder': '192.168.1.10 192.168.20.0/24'
+	}, [ (entry.lanTargets || '').replace(/\s+/g, '\n') ]);
+	var lanTargetsLabel = common.fieldLabel(_('Allowed local addresses'));
+	var pbrMode = policySelect(entry.pbrMode || 'inherit', [
+		{ value: 'inherit', label: _('Use project PBR policy') },
+		{ value: 'exclude', label: _('Direct WAN — exclude from PBR') }
+	]);
+	var publicPorts = E('input', {
+		'type': 'text',
+		'class': 'cbi-input-text',
+		'value': entry.publicPorts || '',
+		'placeholder': '1443 8443-8445'
+	});
+
+	function sync() {
+		lanTargets.disabled = lanAccess.value !== 'limited';
+		lanTargets.style.display = lanAccess.value === 'limited' ? '' : 'none';
+		lanTargetsLabel.style.display = lanAccess.value === 'limited' ? '' : 'none';
+		publicPorts.disabled = routerAccess.value === 'allow';
+	}
+	routerAccess.addEventListener('change', sync);
+	lanAccess.addEventListener('change', sync);
+	sync();
+
+	return {
+		fields: [
+			common.fieldLabel(_('Router access'),
+				_('DNS remains available even when router access is denied.')),
+			routerAccess,
+			common.fieldLabel(_('Public router ports'),
+				_('Additional TCP/UDP ports remain available when router access is denied. Use spaces or commas between ports and ranges.')),
+			publicPorts,
+			common.fieldLabel(_('Internet access'),
+				_('Allows normal WAN traffic and selected destinations through the outbound tunnel.')),
+			internetAccess,
+			common.fieldLabel(_('Local network access'),
+				_('Limit access to individual IPv4 addresses or CIDR networks when needed.')),
+			lanAccess,
+			lanTargetsLabel,
+			lanTargets,
+			common.fieldLabel(_('PBR participation'),
+				_('Direct WAN bypasses the project domain policy for this VPN user.')),
+			pbrMode
+		],
+		value: function() {
+			return {
+				routerAccess: routerAccess.value,
+				internetAccess: internetAccess.value,
+				lanAccess: lanAccess.value,
+				pbrMode: pbrMode.value,
+				publicPorts: routerAccess.value === 'allow' ? '' :
+					normalizePortList(publicPorts.value),
+				lanTargets: lanAccess.value === 'limited' ?
+					lanTargets.value.trim().split(/[\s,]+/).filter(Boolean).join(' ') : ''
+			};
+		}
+	};
 }
 
 function passwordDialog(title, username, action, includeUsername, pageResult, refresh) {
@@ -119,8 +236,9 @@ function passwordDialog(title, username, action, includeUsername, pageResult, re
 							dialogResult.err(_('Password is required.'));
 							return;
 						}
-						return runUserSecretAction(button,
+						return runUserInputAction(button,
 							action === 'user-add' ? 'add' : 'password', user, password.value,
+							null,
 							dialogResult,
 							includeUsername ? _('VPN user added.') : _('Password changed.'),
 							function() {
@@ -136,6 +254,90 @@ function passwordDialog(title, username, action, includeUsername, pageResult, re
 		])
 	]);
 	(includeUsername ? name : password).focus();
+}
+
+function userDialog(title, entry, includeIdentity, pageResult, refresh) {
+	entry = entry || {};
+	var name = E('input', {
+		'type': 'text',
+		'class': 'cbi-input-text',
+		'value': entry.name || '',
+		'placeholder': 'new-user',
+		'autocomplete': 'off'
+	});
+	var password = E('input', {
+		'type': 'password',
+		'class': 'cbi-input-text',
+		'placeholder': _('Password'),
+		'autocomplete': 'new-password'
+	});
+	var editor = policyEditor(entry);
+	var dialogResult = common.inlineResult();
+	var fields = [];
+	if (includeIdentity) {
+		fields.push(common.fieldLabel(_('Username'), _('Letters, digits, dot, dash and underscore.')));
+		fields.push(name);
+		fields.push(common.fieldLabel(_('Password')));
+		fields.push(password);
+	}
+	fields.push(common.fieldLabel(_('Individual access policy'),
+		_('Global values remain defaults; choose an override only where this user differs.')));
+	fields.push(E('div', { 'class': 'ikev2-note' }, [
+		_('A newly connected client is blocked until its authenticated identity is matched to its virtual address.')
+	]));
+	fields = fields.concat(editor.fields);
+
+	ui.showModal(title, [
+		E('div', { 'class': 'ikev2-page' }, [
+			common.styles(),
+			E('div', { 'class': 'ikev2-form-grid' }, fields),
+			E('div', { 'class': 'ikev2-actions end', 'style': 'margin-top:1.2rem;' }, [
+				dialogResult.node,
+				E('button', {
+					'class': 'cbi-button',
+					'type': 'button',
+					'click': ui.hideModal
+				}, [ _('Cancel') ]),
+				E('button', {
+					'class': 'cbi-button cbi-button-positive',
+					'type': 'button',
+					'click': function(ev) {
+						var button = ev.currentTarget;
+						var user = includeIdentity ? name.value.trim() : entry.name;
+						var policy = editor.value();
+						if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(user)) {
+							dialogResult.err(_('Invalid username.'));
+							return;
+						}
+						if (includeIdentity && !password.value) {
+							dialogResult.err(_('Password is required.'));
+							return;
+						}
+						if (policy.lanAccess === 'limited' && !policy.lanTargets) {
+							dialogResult.err(_('Enter at least one allowed local address.'));
+							return;
+						}
+						if (!validPortList(policy.publicPorts)) {
+							dialogResult.err(_('Enter valid public router ports or ranges.'));
+							return;
+						}
+						return runUserInputAction(button, includeIdentity ? 'add' : 'policy',
+							user, includeIdentity ? password.value : '', policy, dialogResult,
+							includeIdentity ? _('VPN user added.') : _('Access policy saved.'),
+							function() {
+								return refresh().then(function() {
+									ui.hideModal();
+									pageResult.ok(includeIdentity ?
+										_('VPN user added.') : _('Access policy saved.'));
+								});
+							});
+					}
+				}, [ _('Save') ])
+			])
+		])
+	]);
+	if (includeIdentity)
+		name.focus();
 }
 
 return view.extend({
@@ -159,6 +361,8 @@ return view.extend({
 		var onlineCount = common.pill('', 'neutral');
 		var actionResult = common.inlineResult();
 		var disconnectAll;
+		var globalAccess = {};
+		var customMode = false;
 
 		function actionButton(icon, label, className, handler) {
 			return E('button', {
@@ -174,6 +378,39 @@ return view.extend({
 			return loadUsers().then(function(next) {
 				setData(next);
 			});
+		}
+
+		function resolvedAccess(entry, key, globalKey) {
+			var mode = entry[key];
+			if (mode === 'allow' || mode === 'all')
+				return { label: _('Allowed'), tone: 'good' };
+			if (mode === 'deny')
+				return { label: _('Denied'), tone: 'neutral' };
+			return globalAccess[globalKey] === '1' ?
+				{ label: _('Global: allowed'), tone: 'info' } :
+				{ label: _('Global: denied'), tone: 'neutral' };
+		}
+
+		function policySummary(entry) {
+			var router = resolvedAccess(entry, 'routerAccess', 'allow_router');
+			var internet = resolvedAccess(entry, 'internetAccess', 'allow_internet');
+			var lan;
+			if (entry.lanAccess === 'limited')
+				lan = { label: _('Selected addresses'), tone: 'info' };
+			else
+				lan = resolvedAccess(entry, 'lanAccess', 'allow_lan');
+			var pbr = entry.pbrMode === 'exclude' ?
+				{ label: _('Direct WAN'), tone: 'warn' } :
+				{ label: _('Project policy'), tone: 'neutral' };
+			var pills = [
+				common.pill(_('Router: %s').format(router.label), router.tone),
+				common.pill(_('Internet: %s').format(internet.label), internet.tone),
+				common.pill(_('LAN: %s').format(lan.label), lan.tone),
+				common.pill(_('PBR: %s').format(pbr.label), pbr.tone)
+			];
+			if (entry.publicPorts)
+				pills.push(common.pill(_('Public ports: %s').format(entry.publicPorts), 'info'));
+			return E('div', { 'class': 'ikev2-actions', 'style': 'gap:.4rem;margin-top:.35rem' }, pills);
 		}
 
 		function renderList() {
@@ -224,23 +461,29 @@ return view.extend({
 				var changeLabel = _('Change password');
 				var deleteLabel = _('Delete');
 				userCards.push(E('div', { 'class': 'ikev2-user-card' }, [
-				E('div', { 'class': 'ikev2-user-identity' }, [
-					E('span', { 'class': 'ikev2-user-avatar' }, [ entry.name.slice(0, 1) || '?' ]),
-					E('div', { 'style': 'min-width:0' }, [
-						E('strong', { 'class': 'ikev2-user-name' }, [ entry.name ]),
-						active.length ?
-							common.pill(active.length > 1 ?
-								_('%d active sessions').format(active.length) : _('Online'), 'good') :
-							common.pill(_('Offline'), 'neutral')
-					])
-				]),
-				sessionNode,
-				E('div', { 'class': 'ikev2-user-actions' }, [
-					actionButton('key', changeLabel, 'cbi-button-edit', function() {
+					E('div', { 'class': 'ikev2-user-identity' }, [
+						E('span', { 'class': 'ikev2-user-avatar' }, [ entry.name.slice(0, 1) || '?' ]),
+						E('div', { 'style': 'min-width:0' }, [
+							E('strong', { 'class': 'ikev2-user-name' }, [ entry.name ]),
+							active.length ?
+								common.pill(active.length > 1 ?
+									_('%d active sessions').format(active.length) : _('Online'), 'good') :
+								common.pill(_('Offline'), 'neutral')
+						])
+					]),
+					E('div', { 'style': 'display:grid;gap:.45rem;min-width:0' }, [
+						sessionNode,
+						policySummary(entry)
+					]),
+					E('div', { 'class': 'ikev2-user-actions' }, [
+						actionButton('settings', _('Access policy'), 'cbi-button-edit', function() {
+							userDialog(_('VPN user access'), entry, false, actionResult, refresh);
+						}),
+						actionButton('key', changeLabel, 'cbi-button-edit', function() {
 							passwordDialog(_('Change password'), entry.name,
 								'user-password', false, actionResult, refresh);
 						}),
-					actionButton('trash', deleteLabel, 'cbi-button-remove', function(ev) {
+						actionButton('trash', deleteLabel, 'cbi-button-remove', function(ev) {
 							if (!window.confirm(_('Delete user %s?').format(entry.name)))
 								return;
 							return runUserAction(ev.currentTarget,
@@ -250,7 +493,7 @@ return view.extend({
 								{ busy: _('Deleting...'),
 								  onSuccess: refresh });
 						})
-				])
+					])
 				]));
 			});
 			list.replaceChildren(users.length ?
@@ -260,8 +503,21 @@ return view.extend({
 
 		function setData(next) {
 			users = ((next[0] && next[0].stdout) || '').replace(/\r/g, '').split('\n')
-				.filter(Boolean).map(function(line) { return { name: line }; });
+				.filter(Boolean).map(function(line) {
+					var fields = line.split('\t');
+					return {
+						name: fields[0],
+						routerAccess: fields[1] || 'inherit',
+						internetAccess: fields[2] || 'inherit',
+						lanAccess: fields[3] || 'inherit',
+						pbrMode: fields[4] || 'inherit',
+						lanTargets: fields[5] || '',
+						publicPorts: fields[6] || ''
+					};
+				});
 			sessions = sessionsByUser(common.parseSwanmon(next[1] || { stdout: '' }));
+			globalAccess = common.parseKeyValues((next[2] && next[2].stdout) || '');
+			customMode = common.parseKeyValues((next[3] && next[3].stdout) || '').custom_config === '1';
 			online = Object.keys(sessions).reduce(function(total, user) {
 				return total + sessions[user].length;
 			}, 0);
@@ -277,7 +533,7 @@ return view.extend({
 		}
 
 		var add = actionButton('addUser', _('Add user'), 'cbi-button-add', function() {
-				passwordDialog(_('Add VPN user'), '', 'user-add', true, actionResult, refresh);
+				userDialog(_('Add VPN user'), {}, true, actionResult, refresh);
 			});
 		disconnectAll = actionButton('disconnectAll', _('Disconnect all'),
 			'cbi-button-negative', function(ev) {
@@ -302,6 +558,10 @@ return view.extend({
 						E('div', { 'class': 'ikev2-note', 'style': 'margin-bottom:1rem' }, [
 							_('Online shows only IKEv2 sessions terminating on this router. A device connected to the outbound VPS tunnel is shown on the Outbound Tunnel page and is not counted here.')
 						]),
+						customMode ? E('div', {
+							'class': 'ikev2-note warn',
+							'style': 'margin-bottom:1rem'
+						}, [ _('Individual access policies are stored but are not enforced while a custom inbound profile is active.') ]) : '',
 						list,
 						E('div', { 'class': 'ikev2-actions end ikev2-save-bar' }, [
 							actionResult.node,

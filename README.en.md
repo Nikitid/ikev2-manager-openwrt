@@ -16,7 +16,8 @@ remote gateway.
 - VPN routing for services, domains, IPv4 addresses and CIDR networks;
 - per-device modes for selected domains, full tunnel or direct WAN;
 - FakeIP/TProxy domain routing and fail-closed PBR;
-- inbound IKEv2/EAP server with user and router-network access controls;
+- inbound IKEv2/EAP server with global and per-user access to the router,
+  selected public router ports, Internet and selected local IPv4 destinations;
 - DNS upstream over UDP, TCP, DoT, DoH, HTTP/3, DoQ or DNSCrypt;
 - ACME and Russian/English LuCI interfaces.
 

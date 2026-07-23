@@ -349,6 +349,10 @@ if grep -Fq 'route flush table' "$root/ikev2-manager-runtime/ikev2-domain-router
 fi
 grep -Fq "tproxy_table='51820'" "$root/ikev2-manager-runtime/ikev2-domain-router.sh"
 grep -Fq "tproxy_priority='11000'" "$root/ikev2-manager-runtime/ikev2-domain-router.sh"
+grep -Fq '"tag": "tproxy-direct-in"' \
+	"$root/ikev2-manager-runtime/ikev2-domain-router.sh"
+grep -Fq 'meta mark == $direct_tproxy_mark return' \
+	"$root/ikev2-manager-runtime/ikev2-domain-router.sh"
 if grep -Fq '"routing_mark"' "$root/ikev2-manager-runtime/ikev2-domain-router.sh"; then
 	echo 'FakeIP config still contains a hard-coded PBR routing mark' >&2
 	exit 1

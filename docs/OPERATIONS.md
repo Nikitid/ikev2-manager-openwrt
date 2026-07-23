@@ -54,6 +54,7 @@ apk upgrade luci-app-ikev2-manager
 /usr/libexec/ikev2-manager overview
 /usr/libexec/ikev2-manager-system failclosed-check
 /usr/libexec/ikev2-domain-router status
+/usr/libexec/ikev2-user-policy check
 /etc/init.d/pbr status
 swanctl --list-sas
 ```
@@ -102,6 +103,35 @@ nft list table inet ikev2_device_policy
 
 The LuCI picker lists active local IPv4 neighbours and enriches them with DHCP
 names. Use Custom for a sleeping client, a static address or a subnet.
+
+## Inbound user access
+
+Inbound Server access settings are global defaults. The VPN Users page can
+override each managed EAP user:
+
+- router access: inherit, allow or deny;
+- additional TCP/UDP router ports or ranges that remain reachable while router
+  access is denied;
+- Internet access: inherit, allow or deny;
+- local access: inherit, all configured local zones, selected IPv4/CIDR
+  destinations or deny;
+- PBR: inherit the project domain policy or use direct WAN.
+
+DNS on the router remains reachable for authenticated inbound clients even
+when router access is denied. An additional router-port allowlist can expose a
+specific same-router public service, for example TCP/UDP 1443, without allowing
+other router services. Other traffic is denied until the active EAP identity is
+associated with its current virtual address. Inspect the runtime without
+changing it:
+
+```sh
+/usr/libexec/ikev2-user-policy check
+nft list table inet ikev2_user_policy
+```
+
+Policy allow entries have a short timeout and are refreshed by the health
+watcher. Deleting a user or losing the identity-to-address mapping therefore
+fails closed. Custom inbound profiles do not use the managed per-user policy.
 
 ## Background actions
 

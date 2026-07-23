@@ -2,6 +2,16 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## Unreleased
+
+- Added per-user inbound access policies with global inheritance, router and
+  Internet overrides, full or IPv4/CIDR-limited local access, and optional PBR
+  exclusion through direct WAN.
+- Added per-user TCP/UDP router-port exceptions so selected public services
+  remain reachable while general router access stays denied.
+- Mapped authenticated EAP identities to short-lived virtual-address rules so
+  new, disconnected and reused pool addresses fail closed.
+
 ## 1.1.9 - 2026-07-18
 
 - Migrated the identity-hash constraint left by older local APK installations

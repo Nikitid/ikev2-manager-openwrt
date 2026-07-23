@@ -1,4 +1,8 @@
 Runtime secrets and the VPN user database are stored in this directory.
 Do not publish it or include it in bug reports.
+Per-user access policies are stored in /etc/config/ikev2-manager separately
+from credentials. They follow the authenticated EAP identity even when the
+inbound pool assigns a different virtual IPv4 address. Optional public_ports
+entries expose only those TCP/UDP router ports to the matching active user.
 When managed DNS is enabled, the original dnsproxy and dnsmasq UCI exports are
 stored under dns-original/ so the previous resolver can be restored safely.

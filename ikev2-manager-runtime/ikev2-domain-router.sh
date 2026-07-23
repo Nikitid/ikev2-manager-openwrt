@@ -3,21 +3,23 @@
 set -u
 
 config='ikev2-manager'
-domain_file='/etc/pbr-ikev2-domains.txt'
-config_file='/etc/ikev2-manager/domain-router.json'
-ruleset_file='/etc/ikev2-manager/domain-router-rules.json'
-work_dir='/etc/ikev2-manager/domain-router'
-state_file='/var/run/ikev2-domain-router.status'
-log_file='/tmp/ikev2-domain-router.log'
-lock_dir='/var/run/ikev2-domain-router.lock'
+domain_file="${IKEV2_DOMAIN_FILE:-/etc/pbr-ikev2-domains.txt}"
+config_file="${IKEV2_DOMAIN_CONFIG:-/etc/ikev2-manager/domain-router.json}"
+ruleset_file="${IKEV2_DOMAIN_RULESET:-/etc/ikev2-manager/domain-router-rules.json}"
+work_dir="${IKEV2_DOMAIN_WORK_DIR:-/etc/ikev2-manager/domain-router}"
+state_file="${IKEV2_DOMAIN_STATE:-/var/run/ikev2-domain-router.status}"
+log_file="${IKEV2_DOMAIN_LOG:-/tmp/ikev2-domain-router.log}"
+lock_dir="${IKEV2_DOMAIN_LOCK:-/var/run/ikev2-domain-router.lock}"
 runtime_lib_dir="${IKEV2_RUNTIME_LIB_DIR:-/usr/libexec/ikev2-manager.d}"
 dns_address='127.0.0.42'
 dns_port='53'
 tproxy_address='127.0.0.1'
 tproxy_port='1602'
+direct_tproxy_port='1603'
 fakeip_range='198.18.0.0/15'
 tproxy_mark='0x400000'
 tproxy_mask='0xff0000'
+direct_tproxy_mark='0x00400001'
 tproxy_table='51820'
 tproxy_priority='11000'
 nft_table='ikev2_domain_router'
@@ -327,6 +329,12 @@ render_config() {
       "tag": "tproxy-in",
       "listen": "$tproxy_address",
       "listen_port": $tproxy_port
+    },
+    {
+      "type": "tproxy",
+      "tag": "tproxy-direct-in",
+      "listen": "$tproxy_address",
+      "listen_port": $direct_tproxy_port
     }
   ],
   "outbounds": [
@@ -349,9 +357,14 @@ render_config() {
         "action": "hijack-dns"
       },
       {
-        "inbound": [ "tproxy-in" ],
+        "inbound": [ "tproxy-in", "tproxy-direct-in" ],
         "action": "sniff",
         "timeout": "300ms"
+      },
+      {
+        "inbound": [ "tproxy-direct-in" ],
+        "action": "route",
+        "outbound": "direct-out"
       },
 $excluded_rule
       {
@@ -471,6 +484,8 @@ listener_ready() {
 nft_runtime_ready() {
 	nft list chain inet "$nft_table" prerouting 2>/dev/null |
 		grep -Fq "$fakeip_range" || return 1
+	nft list chain inet "$nft_table" prerouting 2>/dev/null |
+		grep -Fq "$direct_tproxy_mark" || return 1
 	nft list chain inet "$nft_table" output 2>/dev/null |
 		grep -Fq "$fakeip_range" || return 1
 	ip -4 rule show |
@@ -496,6 +511,7 @@ table inet $nft_table {
 
   chain prerouting {
     type filter hook prerouting priority -151; policy accept;
+    meta mark == $direct_tproxy_mark return
     meta mark & $tproxy_mask == $tproxy_mark meta l4proto tcp tproxy ip to $tproxy_address:$tproxy_port counter accept
     meta mark & $tproxy_mask == $tproxy_mark meta l4proto udp tproxy ip to $tproxy_address:$tproxy_port counter accept
     iifname @local_devices ip daddr $fakeip_range meta l4proto tcp meta mark set $tproxy_mark tproxy ip to $tproxy_address:$tproxy_port counter accept
@@ -610,6 +626,7 @@ runtime_healthy() {
 	/etc/init.d/ikev2-domain-router running >/dev/null 2>&1 || return 1
 	listener_ready "$dns_address" "$dns_port" || return 1
 	listener_ready "$tproxy_address" "$tproxy_port" || return 1
+	listener_ready "$tproxy_address" "$direct_tproxy_port" || return 1
 	[ "$(uci -q get dhcp.@dnsmasq[0].server 2>/dev/null || true)" = "$dns_address" ] ||
 		return 1
 	[ "$(uci -q get dhcp.@dnsmasq[0].cachesize 2>/dev/null || true)" = 0 ] ||
@@ -633,7 +650,8 @@ repair_runtime() {
 	[ "$(defaultv domains engine nftset)" = fakeip ] || return 0
 	if ! /etc/init.d/ikev2-domain-router running >/dev/null 2>&1 ||
 	   ! listener_ready "$dns_address" "$dns_port" ||
-	   ! listener_ready "$tproxy_address" "$tproxy_port"; then
+	   ! listener_ready "$tproxy_address" "$tproxy_port" ||
+	   ! listener_ready "$tproxy_address" "$direct_tproxy_port"; then
 		/etc/init.d/ikev2-domain-router restart
 		wait_for_dns || return 1
 	fi

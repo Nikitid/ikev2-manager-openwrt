@@ -138,5 +138,27 @@ EAP-MSCHAPv2 for users. Traffic selectors decide what clients send into IKEv2;
 firewall permissions independently allow Internet, selected local zones and
 router services.
 
+Server access settings are defaults. A managed user can inherit them or
+override router access, Internet forwarding and local-network access. Limited
+local access accepts IPv4 addresses and CIDR networks. Per-user TCP/UDP router
+ports remain available even when general router access is denied. Firewall4
+opens only the union of configured ports from the inbound zone; the app-owned
+identity-to-address rules narrow that union for each active user. A PBR
+exclusion marks that user's Internet traffic for the normal WAN after the
+shared classifiers. In FakeIP mode a separate TProxy inbound resolves the
+existing FakeIP mapping through the direct outbound. The override does not
+weaken the fail-closed route used by other clients.
+
+The runtime maps the authenticated EAP identity from the active IKE SA to its
+current virtual IPv4 address. Until that mapping exists, the whole inbound pool
+is denied except for DNS on the router. Dynamic allow entries expire unless the
+health watcher refreshes them, so a disconnected address cannot retain another
+user's policy when the pool reuses it. Traffic between client addresses in the
+inbound pool remains isolated. The underlying firewall opens only the union
+required by global defaults and explicit user overrides; the app-owned nftables
+table then narrows access per virtual address.
+
 Raw strongSwan profile overrides are validated, installed atomically and rolled
-back when loading fails. Credentials remain managed separately.
+back when loading fails. Per-user policies remain stored but are not enforced
+while a custom inbound profile is active. Credentials remain managed
+separately.

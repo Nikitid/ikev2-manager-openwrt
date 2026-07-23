@@ -48,6 +48,7 @@ install_file 755 ikev2-manager-runtime/ikev2-sync-vips.sh /usr/libexec/ikev2-syn
 install_file 755 ikev2-manager-runtime/ikev2-domain-router.sh /usr/libexec/ikev2-domain-router
 install_file 755 ikev2-manager-runtime/ikev2-discord-voice.sh /usr/libexec/ikev2-discord-voice
 install_file 755 ikev2-manager-runtime/ikev2-device-routing.sh /usr/libexec/ikev2-device-routing
+install_file 755 ikev2-manager-runtime/ikev2-user-policy.sh /usr/libexec/ikev2-user-policy
 install_file 755 luci-ikev2-domains/community-domains.sh /usr/libexec/ikev2-domains-community
 install_file 755 luci-ikev2-domains/restart-pbr.sh /usr/libexec/ikev2-domains-restart
 install_file 755 luci-ikev2-domains/ikev2-devices.sh /usr/libexec/ikev2-devices

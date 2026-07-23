@@ -1,0 +1,544 @@
+#!/bin/sh
+
+set -u
+umask 077
+
+config='ikev2-manager'
+nft_bin="${IKEV2_NFT:-/usr/sbin/nft}"
+table="${IKEV2_USER_POLICY_TABLE:-ikev2_user_policy}"
+users_db="${IKEV2_USERS_DB:-/etc/ikev2-manager/users.db}"
+sessions_file="${IKEV2_SESSIONS_FILE:-}"
+raw_sessions_file="${IKEV2_SWANCTL_RAW:-}"
+rules_out="${IKEV2_RULES_OUT:-}"
+signature_file="${IKEV2_USER_POLICY_SIGNATURE:-/var/run/ikev2-user-policy.signature}"
+session_state="${IKEV2_USER_POLICY_SESSIONS:-/var/run/ikev2-user-policy.sessions}"
+uci_config_dir="${IKEV2_UCI_CONFIG_DIR:-/etc/config}"
+uci_binary="${IKEV2_UCI_BIN:-/sbin/uci}"
+session_timeout="${IKEV2_USER_POLICY_TIMEOUT:-45s}"
+direct_tproxy_address='127.0.0.1'
+direct_tproxy_port='1603'
+direct_tproxy_mark='0x00400001'
+tproxy_mark='0x00400000'
+tproxy_mask='0x00ff0000'
+fakeip_range='198.18.0.0/15'
+
+uci() {
+	"$uci_binary" -c "$uci_config_dir" "$@"
+}
+
+runtime_exists() {
+	"$nft_bin" list table inet "$table" >/dev/null 2>&1
+}
+
+runtime_owned() {
+	"$nft_bin" list table inet "$table" 2>/dev/null |
+		grep -Fq 'chain ikev2_manager_owned'
+}
+
+stop_runtime() {
+	if runtime_exists; then
+		runtime_owned || {
+			printf "nft table '%s' is not owned by IKEv2 Manager\n" "$table" >&2
+			return 1
+		}
+		"$nft_bin" delete table inet "$table" >/dev/null 2>&1 || return 1
+	fi
+	rm -f "$signature_file" "$session_state"
+}
+
+valid_user() {
+	[ -n "$1" ] && [ "${#1}" -le 64 ] &&
+		printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.@-]+$'
+}
+
+valid_ipv4() {
+	printf '%s\n' "$1" | awk -F. '
+		NF != 4 { exit 1 }
+		{
+			for (i = 1; i <= 4; i++)
+				if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255)
+					exit 1
+		}
+	'
+}
+
+valid_ipv4_target() {
+	case "$1" in
+		*/*)
+			address="${1%/*}"
+			prefix="${1#*/}"
+			case "$prefix" in '' | *[!0-9]*) return 1 ;; esac
+			[ "$prefix" -le 32 ] && valid_ipv4 "$address"
+			;;
+		*) valid_ipv4 "$1" ;;
+	esac
+}
+
+valid_target_list() {
+	count=0
+	for target in $1; do
+		count=$((count + 1))
+		[ "$count" -le 64 ] && valid_ipv4_target "$target" || return 1
+	done
+	[ "$count" -gt 0 ]
+}
+
+valid_port_list() {
+	value="$(normalize_list "$1")"
+	[ -z "$value" ] && return 0
+	count=0
+	for item in $value; do
+		count=$((count + 1))
+		[ "$count" -le 64 ] || return 1
+		printf '%s' "$item" | grep -Eq '^[0-9]+(-[0-9]+)?$' || return 1
+		start="${item%%-*}"
+		end="${item#*-}"
+		[ "$start" -ge 1 ] && [ "$start" -le 65535 ] || return 1
+		[ "$end" -ge "$start" ] && [ "$end" -le 65535 ] || return 1
+	done
+}
+
+valid_device() {
+	[ -n "$1" ] && [ "${#1}" -le 15 ] &&
+		printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.:@-]+$'
+}
+
+normalize_list() {
+	printf '%s' "$1" | tr ',' ' ' | tr -s ' ' | sed 's/^ //;s/ $//'
+}
+
+policy_section() {
+	printf 'user_%s\n' "$(printf '%s' "$1" | sha256sum | awk '{ print substr($1, 1, 16) }')"
+}
+
+policy_value() {
+	user="$1"
+	option="$2"
+	fallback="$3"
+	section="$(policy_section "$user")"
+	saved_user="$(uci -q get "$config.$section.username" 2>/dev/null || true)"
+	if [ "$saved_user" = "$user" ]; then
+		value="$(uci -q get "$config.$section.$option" 2>/dev/null || true)"
+	else
+		value=''
+	fi
+	printf '%s\n' "${value:-$fallback}"
+}
+
+user_exists() {
+	awk -F '\t' -v user="$1" '$1 == user { found = 1 } END { exit found ? 0 : 1 }' \
+		"$users_db" 2>/dev/null
+}
+
+network_device() {
+	interface="$1"
+	device="$(ubus call "network.interface.$interface" status 2>/dev/null |
+		jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+	[ -n "$device" ] ||
+		device="$(ubus call "network.interface.$interface" status 2>/dev/null |
+			jsonfilter -e '@.device' 2>/dev/null || true)"
+	[ -n "$device" ] ||
+		device="$(uci -q get "network.$interface.device" 2>/dev/null || true)"
+	valid_device "$device" && printf '%s\n' "$device"
+}
+
+collect_lan_devices() {
+	output="$1"
+	: >"$output"
+	for wanted in $(uci -q get "$config.server.lan_zone" 2>/dev/null || echo lan); do
+		uci show firewall 2>/dev/null |
+			sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p' |
+			while IFS= read -r section; do
+			name="$(uci -q get "firewall.$section.name" 2>/dev/null || true)"
+			if [ "$name" = "$wanted" ]; then
+				for network in $(uci -q get "firewall.$section.network" 2>/dev/null || true); do
+					network_device "$network" >>"$output" 2>/dev/null || true
+				done
+				for device in $(uci -q get "firewall.$section.device" 2>/dev/null || true); do
+					valid_device "$device" && printf '%s\n' "$device" >>"$output"
+				done
+			fi
+		done
+	done
+	sort -u "$output" -o "$output"
+}
+
+lan_access_configured() {
+	[ "$(uci -q get "$config.server.allow_lan" 2>/dev/null || echo 1)" = 1 ] &&
+		return 0
+	for section in $(uci show "$config" 2>/dev/null |
+		sed -n "s/^${config}\.\([^.=]*\)=user_policy$/\1/p"); do
+		case "$(uci -q get "$config.$section.lan_access" 2>/dev/null || true)" in
+			all | limited) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+collect_sessions() {
+	output="$1"
+	: >"$output"
+	if [ -n "$sessions_file" ]; then
+		[ -r "$sessions_file" ] && cat "$sessions_file" >"$output"
+		return
+	fi
+	if [ -n "$raw_sessions_file" ] && [ -r "$raw_sessions_file" ]; then
+		raw="$(cat "$raw_sessions_file")"
+	else
+		raw="$(swanctl --list-sas --raw 2>/dev/null || true)"
+	fi
+	[ -n "$raw" ] || return 0
+	{
+		printf '%s\n' "$raw" | tr '\n' ' '
+		printf '\n'
+	} |
+		sed 's/ikev2-in {/\
+ikev2-in {/g' |
+		sed -n 's/.*remote-eap-id="\{0,1\}\([^ "][^ "]*\)"\{0,1\}.*remote-vips=\[\([^ ]*\).*/\1	\2/p' \
+		>"$output"
+}
+
+pbr_mark_rule() {
+	ip -4 rule show 2>/dev/null |
+		awk '
+			/lookup pbr_wan([[:space:]]|$)/ {
+				for (i = 1; i <= NF; i++)
+					if ($i == "fwmark") { print $(i + 1); exit }
+			}
+		'
+}
+
+mark_values() {
+	rule="$1"
+	case "$rule" in
+		0x[0-9A-Fa-f]*/0x[0-9A-Fa-f]*) ;;
+		*) return 1 ;;
+	esac
+	mark="${rule%%/*}"
+	mask="${rule#*/}"
+	mark_value=$((mark))
+	mask_value=$((mask))
+	clear_value=$((0xffffffff ^ mask_value))
+	printf '%s %s\n' "$(printf '0x%08x' "$clear_value")" \
+		"$(printf '0x%08x' "$mark_value")"
+}
+
+set_elements() {
+	file="$1"
+	[ -s "$file" ] || return 0
+	awk 'BEGIN { first=1 } NF { if (!first) printf ", "; printf "%s", $0; first=0 }' "$file"
+}
+
+write_address_set() {
+	name="$1"
+	file="$2"
+	printf '  set %s {\n    type ipv4_addr\n    flags timeout\n    timeout %s\n' \
+		"$name" "$session_timeout"
+	if [ -s "$file" ]; then
+		printf '    elements = { '
+		set_elements "$file"
+		printf ' }\n'
+	fi
+	printf '  }\n\n'
+}
+
+write_device_set() {
+	file="$1"
+	printf '  set lan_devices {\n    type ifname\n'
+	if [ -s "$file" ]; then
+		printf '    elements = { '
+		awk 'BEGIN { first=1 } NF {
+			if (!first) printf ", "
+			printf "\"%s\"", $0
+			first=0
+		}' "$file"
+		printf ' }\n'
+	fi
+	printf '  }\n\n'
+}
+
+resolve_access() {
+	user="$1"
+	global_router="$2"
+	global_internet="$3"
+	global_lan="$4"
+
+	router="$(policy_value "$user" router_access inherit)"
+	case "$router" in
+		allow) resolved_router=1 ;;
+		deny) resolved_router=0 ;;
+		*) resolved_router="$global_router" ;;
+	esac
+
+	internet="$(policy_value "$user" internet_access inherit)"
+	case "$internet" in
+		allow) resolved_internet=1 ;;
+		deny) resolved_internet=0 ;;
+		*) resolved_internet="$global_internet" ;;
+	esac
+
+	lan="$(policy_value "$user" lan_access inherit)"
+	case "$lan" in
+		all | limited | deny) resolved_lan="$lan" ;;
+		*) [ "$global_lan" = 1 ] && resolved_lan=all || resolved_lan=deny ;;
+	esac
+
+	pbr="$(policy_value "$user" pbr_mode inherit)"
+	[ "$pbr" = exclude ] || pbr=inherit
+}
+
+sync_runtime() {
+	enabled="$(uci -q get "$config.server.enabled" 2>/dev/null || echo 0)"
+	configured="$(uci -q get "$config.globals.configured" 2>/dev/null || echo 0)"
+	custom="$(uci -q get "$config.server.custom_config" 2>/dev/null || echo 0)"
+	if [ "$enabled" != 1 ] || [ "$configured" != 1 ] || [ "$custom" = 1 ]; then
+		stop_runtime
+		return $?
+	fi
+	if runtime_exists && ! runtime_owned; then
+		printf "nft table '%s' is not owned by IKEv2 Manager\n" "$table" >&2
+		return 1
+	fi
+
+	pool="$(uci -q get "$config.server.pool4" 2>/dev/null || true)"
+	case "$pool" in
+		*-*) ;;
+		*) printf '%s\n' 'Invalid inbound client pool' >&2; return 1 ;;
+	esac
+	if ! valid_ipv4 "${pool%%-*}" || ! valid_ipv4 "${pool#*-}"; then
+		printf '%s\n' 'Invalid inbound client pool' >&2
+		return 1
+	fi
+
+	work="${TMPDIR:-/tmp}/ikev2-user-policy.$$"
+	mkdir -p "$work" || return 1
+	trap 'rm -rf "$work"' EXIT INT TERM
+	collect_sessions "$work/sessions"
+	sort -u "$work/sessions" -o "$work/sessions"
+	collect_lan_devices "$work/lan-devices"
+	if lan_access_configured && [ ! -s "$work/lan-devices" ]; then
+		printf '%s\n' 'Unable to resolve an interface for the inbound LAN zones' >&2
+		return 1
+	fi
+	: >"$work/router"
+	: >"$work/internet"
+	: >"$work/lan-full"
+	: >"$work/pbr-excluded"
+	: >"$work/limited"
+	: >"$work/public"
+
+	global_router="$(uci -q get "$config.server.allow_router" 2>/dev/null || echo 0)"
+	global_internet="$(uci -q get "$config.server.allow_internet" 2>/dev/null || echo 1)"
+	global_lan="$(uci -q get "$config.server.allow_lan" 2>/dev/null || echo 1)"
+	mapped=0
+	while IFS="$(printf '\t')" read -r user vip extra; do
+		[ -z "${extra:-}" ] || continue
+		if ! valid_user "$user" || ! valid_ipv4 "$vip" || ! user_exists "$user"; then
+			continue
+		fi
+		resolve_access "$user" "$global_router" "$global_internet" "$global_lan"
+		public_ports="$(normalize_list "$(policy_value "$user" public_ports '')")"
+		valid_port_list "$public_ports" || {
+			printf 'Invalid public router port list for VPN user %s\n' "$user" >&2
+			return 1
+		}
+		[ -z "$public_ports" ] ||
+			printf '%s\t%s\n' "$vip" "$public_ports" >>"$work/public"
+		[ "$resolved_router" = 1 ] && printf '%s\n' "$vip" >>"$work/router"
+		[ "$resolved_internet" = 1 ] && printf '%s\n' "$vip" >>"$work/internet"
+		case "$resolved_lan" in
+			all) printf '%s\n' "$vip" >>"$work/lan-full" ;;
+			limited)
+				targets="$(normalize_list "$(policy_value "$user" lan_targets '')")"
+				valid_target_list "$targets" || {
+					printf 'Invalid local target list for VPN user %s\n' "$user" >&2
+					return 1
+				}
+				printf '%s\t%s\n' "$vip" "$targets" >>"$work/limited"
+				;;
+		esac
+		[ "$pbr" = exclude ] && printf '%s\n' "$vip" >>"$work/pbr-excluded"
+		mapped=$((mapped + 1))
+	done <"$work/sessions"
+	for file in router internet lan-full pbr-excluded; do
+		sort -u "$work/$file" -o "$work/$file"
+	done
+
+	wan_values="$(mark_values "$(pbr_mark_rule)")" || wan_values=''
+	if [ -s "$work/pbr-excluded" ] && [ -z "$wan_values" ]; then
+		printf '%s\n' 'Unable to derive the active WAN PBR mark' >&2
+		return 1
+	fi
+	wan_clear="${wan_values%% *}"
+	wan_mark="${wan_values#* }"
+	domain_engine="$(uci -q get "$config.domains.engine" 2>/dev/null || echo nftset)"
+	if [ "$domain_engine" = fakeip ] && [ -s "$work/pbr-excluded" ]; then
+		case "$fakeip_range" in
+			*/*) valid_ipv4_target "$fakeip_range" ;;
+			*) false ;;
+		esac || {
+			printf '%s\n' 'Invalid FakeIP range for inbound PBR exclusion' >&2
+			return 1
+		}
+	fi
+
+	rules="$work/rules.nft"
+	{
+		runtime_exists && printf 'delete table inet %s\n' "$table"
+		printf 'table inet %s {\n' "$table"
+		cat <<'EOF'
+  chain ikev2_manager_owned {
+    comment "IKEv2 Manager inbound user policy"
+  }
+
+EOF
+		printf '  set inbound_pool {\n    type ipv4_addr\n    flags interval\n'
+		printf '    elements = { %s }\n  }\n\n' "$pool"
+		write_device_set "$work/lan-devices"
+		write_address_set router_allowed "$work/router"
+		write_address_set internet_allowed "$work/internet"
+		write_address_set lan_full "$work/lan-full"
+		write_address_set pbr_excluded "$work/pbr-excluded"
+
+		limited_index=0
+		while IFS="$(printf '\t')" read -r vip targets; do
+			limited_index=$((limited_index + 1))
+			printf '  set lan_limited_%s {\n' "$limited_index"
+			printf '    type ipv4_addr\n    flags timeout\n    timeout %s\n' "$session_timeout"
+			printf '    elements = { %s }\n  }\n\n' "$vip"
+		done <"$work/limited"
+
+		public_index=0
+		while IFS="$(printf '\t')" read -r vip ports; do
+			public_index=$((public_index + 1))
+			printf '  set public_client_%s {\n' "$public_index"
+			printf '    type ipv4_addr\n    flags timeout\n    timeout %s\n' "$session_timeout"
+			printf '    elements = { %s }\n  }\n\n' "$vip"
+		done <"$work/public"
+
+		cat <<EOF
+  chain input {
+    type filter hook input priority -1; policy accept;
+    iifname "ipsec-in" ip saddr @inbound_pool meta l4proto { tcp, udp } th dport 53 return
+    iifname "ipsec-in" ip saddr @inbound_pool meta mark & $tproxy_mask == $tproxy_mark ip saddr @internet_allowed return
+    iifname "ipsec-in" ip saddr @inbound_pool meta mark & $tproxy_mask == $tproxy_mark counter drop
+EOF
+		public_index=0
+		while IFS="$(printf '\t')" read -r vip ports; do
+			public_index=$((public_index + 1))
+			printf '    iifname "ipsec-in" ip saddr @public_client_%s meta l4proto { tcp, udp } th dport { ' \
+				"$public_index"
+			printf '%s' "$ports" | tr ' ' ',' | sed 's/,/, /g'
+			printf ' } return\n'
+		done <"$work/public"
+		cat <<EOF
+    iifname "ipsec-in" ip saddr @router_allowed return
+    iifname "ipsec-in" ip saddr @inbound_pool counter drop
+  }
+
+  chain forward {
+    type filter hook forward priority -1; policy accept;
+    iifname "ipsec-in" ip saddr @inbound_pool jump inbound_policy
+  }
+
+  chain inbound_policy {
+    ip daddr @inbound_pool counter drop
+    oifname @lan_devices jump lan_policy
+    ip saddr @internet_allowed return
+    counter drop
+  }
+
+  chain lan_policy {
+    ip saddr @lan_full return
+EOF
+		limited_index=0
+		while IFS="$(printf '\t')" read -r vip targets; do
+			limited_index=$((limited_index + 1))
+			printf '    ip saddr @lan_limited_%s ip daddr { ' "$limited_index"
+			printf '%s' "$targets" | tr ' ' ',' | sed 's/,/, /g'
+			printf ' } return\n'
+		done <"$work/limited"
+		cat <<'EOF'
+    counter drop
+  }
+EOF
+		if [ -s "$work/pbr-excluded" ] && [ "$domain_engine" = fakeip ]; then
+			cat <<EOF
+
+  chain direct_tproxy {
+    type filter hook prerouting priority -153; policy accept;
+    iifname "ipsec-in" ip saddr @pbr_excluded ip daddr $fakeip_range meta l4proto tcp meta mark set $direct_tproxy_mark tproxy ip to $direct_tproxy_address:$direct_tproxy_port counter accept
+    iifname "ipsec-in" ip saddr @pbr_excluded ip daddr $fakeip_range meta l4proto udp meta mark set $direct_tproxy_mark tproxy ip to $direct_tproxy_address:$direct_tproxy_port counter accept
+  }
+EOF
+		fi
+		if [ -s "$work/pbr-excluded" ]; then
+			cat <<EOF
+
+  chain direct_wan {
+    type filter hook prerouting priority -149; policy accept;
+    iifname "ipsec-in" ip saddr @pbr_excluded meta mark & $tproxy_mask != $tproxy_mark meta mark set meta mark & $wan_clear | $wan_mark counter accept
+  }
+EOF
+		fi
+		echo '}'
+	} >"$rules"
+
+	if [ -n "$rules_out" ]; then
+		cp "$rules" "$rules_out"
+	else
+		"$nft_bin" -c -f "$rules" >/dev/null 2>&1 || {
+			printf '%s\n' 'Inbound user-policy nftables validation failed' >&2
+			return 1
+		}
+		"$nft_bin" -f "$rules" >/dev/null 2>&1 || {
+			printf '%s\n' 'Unable to install inbound user-policy rules' >&2
+			return 1
+		}
+		signature="$({
+			sed "/^delete table inet $table$/d" "$rules"
+			cat "$work/sessions"
+		} | sha256sum | awk '{ print $1 }')"
+		previous="$(cat "$signature_file" 2>/dev/null || true)"
+		if [ "$signature" != "$previous" ] && command -v conntrack >/dev/null 2>&1; then
+			{
+				awk -F '\t' 'NF >= 2 { print $2 }' "$work/sessions"
+				cat "$session_state" 2>/dev/null || true
+			} | sort -u |
+				while IFS= read -r address; do
+					valid_ipv4 "$address" || continue
+					conntrack -D -s "$address" >/dev/null 2>&1 || :
+				done
+		fi
+		mkdir -p "${signature_file%/*}" "${session_state%/*}"
+		printf '%s\n' "$signature" >"${signature_file}.new"
+		mv "${signature_file}.new" "$signature_file"
+		awk -F '\t' 'NF >= 2 { print $2 }' "$work/sessions" |
+			sort -u >"${session_state}.new"
+		chmod 600 "${session_state}.new"
+		mv "${session_state}.new" "$session_state"
+	fi
+	printf 'mapped=%s\n' "$mapped"
+	rm -rf "$work"
+	trap - EXIT INT TERM
+}
+
+check_runtime() {
+	enabled="$(uci -q get "$config.server.enabled" 2>/dev/null || echo 0)"
+	configured="$(uci -q get "$config.globals.configured" 2>/dev/null || echo 0)"
+	custom="$(uci -q get "$config.server.custom_config" 2>/dev/null || echo 0)"
+	if [ "$enabled" != 1 ] || [ "$configured" != 1 ] || [ "$custom" = 1 ]; then
+		! runtime_exists
+		return
+	fi
+	runtime_owned || return 1
+	"$nft_bin" list chain inet "$table" input 2>/dev/null | grep -q 'hook input'
+	"$nft_bin" list chain inet "$table" forward 2>/dev/null | grep -q 'hook forward'
+}
+
+case "${1:-sync}" in
+	sync) sync_runtime ;;
+	stop) stop_runtime ;;
+	check) check_runtime ;;
+	*) printf 'usage: %s [sync|stop|check]\n' "$0" >&2; exit 2 ;;
+esac

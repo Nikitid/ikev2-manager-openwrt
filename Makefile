@@ -141,6 +141,7 @@ define Package/luci-app-ikev2-manager/install
 	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-domain-router.sh $(1)/usr/libexec/ikev2-domain-router
 	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-discord-voice.sh $(1)/usr/libexec/ikev2-discord-voice
 	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-device-routing.sh $(1)/usr/libexec/ikev2-device-routing
+	$(INSTALL_BIN) ./ikev2-manager-runtime/ikev2-user-policy.sh $(1)/usr/libexec/ikev2-user-policy
 	$(INSTALL_BIN) ./luci-ikev2-domains/community-domains.sh $(1)/usr/libexec/ikev2-domains-community
 	$(INSTALL_BIN) ./luci-ikev2-domains/restart-pbr.sh $(1)/usr/libexec/ikev2-domains-restart
 	$(INSTALL_BIN) ./luci-ikev2-domains/ikev2-devices.sh $(1)/usr/libexec/ikev2-devices

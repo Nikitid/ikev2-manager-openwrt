@@ -12,6 +12,8 @@ uci() {
 
 config='ikev2-manager'
 dns_input_file="${IKEV2_DNS_INPUT:-}"
+user_policy_helper="${IKEV2_USER_POLICY_HELPER:-/usr/libexec/ikev2-user-policy}"
+domain_router_helper="${IKEV2_DOMAIN_ROUTER_HELPER:-/usr/libexec/ikev2-domain-router}"
 
 die() {
 	printf '%s\n' "$*" >&2
@@ -42,6 +44,21 @@ valid_name() {
 
 normalize_list() {
 	printf '%s' "$1" | tr ',' ' ' | tr -s ' ' | sed 's/^ //;s/ $//'
+}
+
+valid_port_list() {
+	value="$(normalize_list "$1")"
+	[ -z "$value" ] && return 0
+	count=0
+	for item in $value; do
+		count=$((count + 1))
+		[ "$count" -le 64 ] || return 1
+		printf '%s' "$item" | grep -Eq '^[0-9]+(-[0-9]+)?$' || return 1
+		start="${item%%-*}"
+		end="${item#*-}"
+		[ "$start" -ge 1 ] && [ "$start" -le 65535 ] || return 1
+		[ "$end" -ge "$start" ] && [ "$end" -le 65535 ] || return 1
+	done
 }
 
 defaultv() {
@@ -1181,6 +1198,31 @@ sync_inbound_access() {
 	allow_lan="$(defaultv server allow_lan 1)"
 	allow_router="$(defaultv server allow_router 0)"
 	router_ports="$(normalize_list "$(getv server router_ports)")"
+	public_ports=''
+	effective_internet="$allow_internet"
+	effective_lan="$allow_lan"
+	effective_router="$allow_router"
+	for policy in $(uci show "$config" 2>/dev/null |
+		sed -n "s/^${config}\.\([^.=]*\)=user_policy$/\1/p"); do
+		[ -n "$(uci -q get "$config.$policy.username" 2>/dev/null || true)" ] || continue
+		policy_public_ports="$(normalize_list \
+			"$(uci -q get "$config.$policy.public_ports" 2>/dev/null || true)")"
+		valid_port_list "$policy_public_ports" ||
+			die "Invalid public router ports in VPN user policy '$policy'"
+		for port in $policy_public_ports; do
+			case " $public_ports " in
+				*" $port "*) ;;
+				*) public_ports="${public_ports:+$public_ports }$port" ;;
+			esac
+		done
+		[ "$(uci -q get "$config.$policy.internet_access" 2>/dev/null || true)" = allow ] &&
+			effective_internet=1
+		case "$(uci -q get "$config.$policy.lan_access" 2>/dev/null || true)" in
+			all | limited) effective_lan=1 ;;
+		esac
+		[ "$(uci -q get "$config.$policy.router_access" 2>/dev/null || true)" = allow ] &&
+			effective_router=1
+	done
 
 	delete_prefixed_sections firewall ikev2access_
 	if [ "$server_enabled" != 1 ]; then
@@ -1188,7 +1230,7 @@ sync_inbound_access() {
 		return 0
 	fi
 
-	if [ "$allow_internet" = 1 ]; then
+	if [ "$effective_internet" = 1 ]; then
 		uci set firewall.ikev2access_in_wan=forwarding
 		uci set "firewall.ikev2access_in_wan.src=$inbound_zone"
 		uci set "firewall.ikev2access_in_wan.dest=$wan_zone"
@@ -1200,7 +1242,7 @@ sync_inbound_access() {
 		fi
 	fi
 
-	if [ "$allow_lan" = 1 ]; then
+	if [ "$effective_lan" = 1 ]; then
 		for zone in $(get_list server lan_zone); do
 			key="$(sanitize "$zone")"
 			section="ikev2access_in_${key}"
@@ -1210,7 +1252,7 @@ sync_inbound_access() {
 		done
 	fi
 
-	if [ "$allow_router" = 1 ]; then
+	if [ "$effective_router" = 1 ]; then
 		uci set firewall.ikev2access_router=rule
 		uci set firewall.ikev2access_router.name='IKEv2 inbound access to router'
 		uci set "firewall.ikev2access_router.src=$inbound_zone"
@@ -1223,7 +1265,25 @@ sync_inbound_access() {
 		fi
 	fi
 
+	if [ -n "$public_ports" ]; then
+		uci set firewall.ikev2access_public=rule
+		uci set firewall.ikev2access_public.name='IKEv2 inbound selected router services'
+		uci set "firewall.ikev2access_public.src=$inbound_zone"
+		uci set firewall.ikev2access_public.proto='tcp udp'
+		uci set "firewall.ikev2access_public.dest_port=$public_ports"
+		uci set firewall.ikev2access_public.target='ACCEPT'
+	fi
+
 	uci commit firewall
+}
+
+sync_inbound_user_policy() {
+	[ -x "$user_policy_helper" ] || return 0
+	if [ "$(defaultv domains engine nftset)" = fakeip ] &&
+	   [ -x "$domain_router_helper" ]; then
+		"$domain_router_helper" ensure >/dev/null 2>&1 || return 1
+	fi
+	"$user_policy_helper" sync >/dev/null
 }
 
 sync_pbr() {
@@ -1976,10 +2036,14 @@ restore_uci_state() {
 	done <"$dir/services.state"
 	[ ! -x /usr/share/pbr/pbr.user.ikev2out ] ||
 		/usr/share/pbr/pbr.user.ikev2out >/dev/null 2>&1 || restored=0
+	sync_inbound_user_policy >/dev/null 2>&1 || restored=0
 	[ "$restored" -eq 1 ]
 }
 
 remove_managed() {
+	if [ -x "$user_policy_helper" ]; then
+		"$user_policy_helper" stop >/dev/null 2>&1 || return 1
+	fi
 	if [ -x /usr/libexec/ikev2-device-routing ]; then
 		/usr/libexec/ikev2-device-routing stop >/dev/null 2>&1 || return 1
 	fi
@@ -2125,6 +2189,8 @@ apply_server_runtime() {
 	fw4 -q reload || die 'firewall4 reload failed'
 	ensure_forward_chain ||
 		die 'fw4 forward chain has no zone forwarding after server apply'
+	sync_inbound_user_policy ||
+		die 'Inbound user policy failed to load'
 	ensure_ipv6_failfast
 	/etc/init.d/ikev2-health start >/dev/null 2>&1 || true
 	if [ "$needs_pbr" = 1 ] &&
@@ -2556,6 +2622,8 @@ case "${1:-}" in
 		sync_inbound_access
 		fw4 -q check
 		fw4 -q reload
+		sync_inbound_user_policy ||
+			die 'Inbound user policy failed to load'
 		;;
 	disable)
 		disable_managed ||

@@ -63,6 +63,7 @@ rm -f /var/run/ikev2-manager-action.status /var/run/ikev2-system-action.status
 rm -f /var/run/ikev2-action.lock.status /var/run/ikev2-domain-router.status
 rm -f /var/run/ikev2-health.status /var/run/ikev2-health-probe.state
 rm -f /var/run/ikev2-health-recovery.last /var/run/ikev2-auto-connect.attempt
+rm -f /var/run/ikev2-user-policy.signature /var/run/ikev2-user-policy.sessions
 rm -rf /var/run/ikev2-manager-actions /var/run/ikev2-system-actions
 rm -rf /var/run/ikev2-domains-community-actions /var/run/ikev2-domains-community.pending.d
 for lock in /var/run/ikev2-action.lock /var/run/ikev2-manager-config.lock \

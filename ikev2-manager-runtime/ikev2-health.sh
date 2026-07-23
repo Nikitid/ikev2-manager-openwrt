@@ -116,6 +116,11 @@ ensure_device_routing_policy() {
 	/usr/libexec/ikev2-device-routing sync >/dev/null 2>&1 || :
 }
 
+refresh_inbound_user_policy() {
+	[ -x /usr/libexec/ikev2-user-policy ] || return 0
+	/usr/libexec/ikev2-user-policy sync >/dev/null 2>&1 || :
+}
+
 # Persist once during an orderly reboot/service stop. Keeping the hot runtime
 # dump in /var/run avoids flash writes every 15 seconds, while the shutdown
 # snapshot lets warm client DNS caches survive the next boot without leaking.
@@ -137,6 +142,7 @@ while true; do
 	ensure_device_routing_policy
 
 	/etc/init.d/ikev2-xfrm start
+	refresh_inbound_user_policy
 
 	client_enabled="$(uci -q get ikev2-manager.client.enabled || echo 0)"
 	raw="$(swanctl --list-sas --raw 2>/dev/null || true)"

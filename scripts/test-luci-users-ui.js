@@ -123,14 +123,40 @@ const fileApi = {
 	write: (path, payload) => { userInput = payload; return Promise.resolve(); },
 	exec: (path, args) => {
 		if (path === '/usr/sbin/swanmon') return Promise.resolve({ stdout: '[]' });
-		if (args[0] === 'users-show') return Promise.resolve({ stdout: users.join('\n') + (users.length ? '\n' : '') });
+		if (args[0] === 'users-show') return Promise.resolve({
+			stdout: users.map(user => [
+				user.name, user.routerAccess, user.internetAccess,
+				user.lanAccess, user.pbrMode, user.lanTargets, user.publicPorts
+			].join('\t')).join('\n') + (users.length ? '\n' : '')
+		});
+		if (args[0] === 'server-access-get') return Promise.resolve({
+			stdout: 'allow_router=0\nallow_internet=1\nallow_lan=1\n'
+		});
+		if (args[0] === 'server-get') return Promise.resolve({ stdout: 'custom_config=0\n' });
 		if (args[0] === 'user-secret-set') {
 			const fields = userInput.split('\n');
-			if (fields[0] === 'add') users.push(fields[1]);
+			if (fields[0] === 'add') users.push({
+				name: fields[1],
+				routerAccess: fields[3] || 'inherit',
+				internetAccess: fields[4] || 'inherit',
+				lanAccess: fields[5] || 'inherit',
+				pbrMode: fields[6] || 'inherit',
+				lanTargets: fields[7] || '',
+				publicPorts: fields[8] || ''
+			});
+			if (fields[0] === 'policy') {
+				const user = users.find(item => item.name === fields[1]);
+				user.routerAccess = fields[3];
+				user.internetAccess = fields[4];
+				user.lanAccess = fields[5];
+				user.pbrMode = fields[6];
+				user.lanTargets = fields[7];
+				user.publicPorts = fields[8];
+			}
 			return Promise.resolve({ stdout: '' });
 		}
 		if (args[0] === 'user-delete') {
-			users = users.filter(user => user !== args[1]);
+			users = users.filter(user => user.name !== args[1]);
 			return Promise.resolve({ stdout: '' });
 		}
 		return Promise.resolve({ stdout: '' });
@@ -139,6 +165,11 @@ const fileApi = {
 
 const common = {
 	parseSwanmon: response => JSON.parse(response.stdout || '[]'),
+	parseKeyValues: text => String(text || '').split('\n').reduce((result, line) => {
+		const pos = line.indexOf('=');
+		if (pos >= 0) result[line.slice(0, pos)] = line.slice(pos + 1);
+		return result;
+	}, {}),
 	formatDuration: value => String(value || 0),
 	formatBytes: value => String(value || 0),
 	styles: () => E('style', {}, []),
@@ -200,6 +231,36 @@ const page = factory(view, fileApi, ui, poll, common, L, E, translate, windowMoc
 	assert(root.textContent.includes('test-user'), 'new user appears without a page reload');
 	assert(root.textContent.includes('1 users'), 'user count updates without a page reload');
 	assert(root.textContent.includes('VPN user added.'), 'success is shown in the local action bar');
+
+	await find(root, 'button', 'Access policy').attrs.click({
+		currentTarget: find(root, 'button', 'Access policy')
+	});
+	const selects = [];
+	let targets;
+	let publicPorts;
+	walk(modal, node => {
+		if (node.tag === 'select') selects.push(node);
+		if (node.tag === 'textarea') targets = node;
+		if (node.tag === 'input' && node.attrs.placeholder === '1443 8443-8445')
+			publicPorts = node;
+	});
+	selects[0].value = 'deny';
+	selects[0].attrs.change();
+	selects[1].value = 'deny';
+	selects[2].value = 'limited';
+	selects[2].attrs.change();
+	selects[3].value = 'exclude';
+	targets.value = '192.168.1.20 192.168.10.0/24';
+	publicPorts.value = '1443,8443-8445';
+	const policySave = find(modal, 'button', 'Save');
+	await policySave.attrs.click({ currentTarget: policySave });
+	assert(root.textContent.includes('Router: Denied'), 'router override is shown on the card');
+	assert(root.textContent.includes('Internet: Denied'), 'Internet override is shown on the card');
+	assert(root.textContent.includes('LAN: Selected addresses'), 'limited LAN access is shown on the card');
+	assert(root.textContent.includes('PBR: Direct WAN'), 'PBR exclusion is shown on the card');
+	assert(root.textContent.includes('Public ports: 1443 8443-8445'),
+		'public router ports are normalized and shown on the card');
+	assert(root.textContent.includes('Access policy saved.'), 'policy save uses local inline feedback');
 
 	const remove = find(root, 'button', 'Delete');
 	await remove.attrs.click({ currentTarget: remove });
