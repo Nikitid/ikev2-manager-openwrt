@@ -194,7 +194,7 @@ collect_sessions() {
 	} |
 		sed 's/ikev2-in {/\
 ikev2-in {/g' |
-		sed -n 's/.*remote-eap-id="\{0,1\}\([^ "][^ "]*\)"\{0,1\}.*remote-vips=\[\([^ ]*\).*/\1	\2/p' \
+		sed -n 's/.*remote-eap-id="\{0,1\}\([^ "][^ "]*\)"\{0,1\}.*remote-vips=\[\([^], ]*\).*/\1	\2/p' \
 		>"$output"
 }
 

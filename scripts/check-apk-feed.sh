@@ -11,12 +11,20 @@ root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 . "$root/apk-feed.env"
 
 public_key="$root/$OPENWRT_APK_KEY_FILE"
+alias_key="$root/$OPENWRT_APK_KEY_ALIAS"
 release_workflow="$root/.github/workflows/release.yml"
+shared_workflow="$root/.github/workflows/shared-apk-feed.yml"
 [ -r "$public_key" ] || fail "public key not found: $OPENWRT_APK_KEY_FILE"
+[ -r "$alias_key" ] || fail "public-key alias not found: $OPENWRT_APK_KEY_ALIAS"
 
 actual="$(sha256sum "$public_key" | awk '{ print $1 }')"
 [ "$actual" = "$OPENWRT_APK_TRUST_SHA256" ] ||
 	fail "public key checksum mismatch: $actual"
+alias_actual="$(sha256sum "$alias_key" | awk '{ print $1 }')"
+[ "$alias_actual" = "$OPENWRT_APK_TRUST_SHA256" ] ||
+	fail "public-key alias checksum mismatch: $alias_actual"
+cmp -s "$public_key" "$alias_key" ||
+	fail 'public-key alias is not byte-for-byte identical'
 
 openssl pkey -pubin -in "$public_key" -noout >/dev/null 2>&1 ||
 	fail 'release public key is not a valid PEM public key'
@@ -39,6 +47,21 @@ grep -Fq 'OPENWRT_APK_FEED_URL="$OPENWRT_APK_CHANNEL_BASE/packages.adb"' \
 	fail 'bootstrap feed URL is not derived from the release channel'
 grep -Fq 'git -C "$channel_dir" push origin HEAD:apk-feed' "$release_workflow" ||
 	fail 'release workflow does not publish the stable APK channel'
+grep -Fq '"$OPENWRT_OVERVIEW_REPOSITORY"' "$release_workflow" ||
+	fail 'release workflow does not download Overview Manager'
+grep -Fq 'dist/apk-feed/nikitid-openwrt-release.pem' "$release_workflow" ||
+	fail 'release workflow does not publish the generic key alias'
+grep -Fq 'types:' "$shared_workflow" &&
+grep -Fq 'overview-manager-release' "$shared_workflow" ||
+	fail 'shared feed workflow cannot be triggered by Overview Manager'
+grep -Fq '"$OPENWRT_IKEV2_REPOSITORY"' "$shared_workflow" &&
+grep -Fq '"$OPENWRT_OVERVIEW_REPOSITORY"' "$shared_workflow" ||
+	fail 'shared feed workflow does not retain both applications'
+grep -Fq './scripts/assemble-shared-apk-feed.sh' "$shared_workflow" ||
+	fail 'shared feed workflow does not use the verified assembler'
+grep -Fq 'verify "$ikev2_apk"' "$root/scripts/assemble-shared-apk-feed.sh" &&
+grep -Fq 'verify "$overview_apk"' "$root/scripts/assemble-shared-apk-feed.sh" ||
+	fail 'shared feed assembler does not verify both APK signatures'
 for prerelease in _rc _beta _alpha; do
 	grep -Fq "contains(github.ref_name, '$prerelease')" "$release_workflow" ||
 		fail "release workflow does not exclude $prerelease tags from the stable APK channel"

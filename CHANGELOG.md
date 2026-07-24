@@ -2,6 +2,16 @@
 
 This project follows semantic versioning for the application and release tags.
 
+## 1.2.1 - 2026-07-24
+
+- Fixed active inbound clients being rejected by the fail-closed user policy
+  when strongSwan reports a virtual address without whitespace before the
+  closing `remote-vips` bracket.
+- Fixed MTProto firewall status detection for a public TCP 1443 service
+  terminated on the router.
+- Converted the OpenWrt 25.12 channel into a shared signed application feed
+  retaining both IKEv2 Manager and Overview Manager.
+
 ## 1.2.0 - 2026-07-24
 
 - Added a Status Overview widget summarizing outbound tunnel connectivity and

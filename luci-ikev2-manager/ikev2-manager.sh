@@ -2074,11 +2074,12 @@ overview() {
 	[ -n "$configured" ] || configured=0
 	[ "$configured" = 1 ] && runtime_mode=managed || runtime_mode=unconfigured
 	printf 'health=%s\n' "$(sed -n 's/^state=\([^ ]*\).*/\1/p' /var/run/ikev2-health.status 2>/dev/null || echo unknown)"
-	printf 'pbr=%s\n' "$(/etc/init.d/pbr running && echo running || echo stopped)"
+	printf 'pbr=%s\n' "$("$root/etc/init.d/pbr" running && echo running || echo stopped)"
 	printf 'configured=%s\n' "$configured"
 	printf 'runtime_mode=%s\n' "$runtime_mode"
 	printf 'package_installed=%s\n' "$(package_installed luci-app-ikev2-manager && echo 1 || echo 0)"
-	printf 'zapret=%s\n' "$([ -x /etc/init.d/zapret ] && /etc/init.d/zapret running && echo running || echo not-installed)"
+	printf 'zapret=%s\n' "$([ -x "$root/etc/init.d/zapret" ] &&
+		"$root/etc/init.d/zapret" running && echo running || echo not-installed)"
 	printf 'client_enabled=%s\n' "$(getv client enabled)"
 	printf 'client_remote=%s\n' "$(getv client remote_address)"
 	printf 'client_mtu=%s\n' "$(getv client mtu)"
@@ -2115,8 +2116,14 @@ overview() {
 	printf 'killswitch=%s\n' "$(ip -4 route show table pbr_ikev2out 2>/dev/null |
 		grep -Eq '^unreachable default( |$)' && echo active || echo missing)"
 	printf 'inbound_firewall=%s\n' "$(nft list ruleset 2>/dev/null | grep -Eq 'udp dport.*500.*4500.*accept' && echo active || echo missing)"
-	printf 'mtproto=%s\n' "$([ -x /etc/init.d/tg-ws-proxy ] && /etc/init.d/tg-ws-proxy running && echo running || echo not-installed)"
-	printf 'mtproto_firewall=%s\n' "$(nft list ruleset 2>/dev/null | grep -Eq 'tcp dport 1443.*dnat' && echo active || echo missing)"
+	printf 'mtproto=%s\n' "$([ -x "$root/etc/init.d/tg-ws-proxy" ] &&
+		"$root/etc/init.d/tg-ws-proxy" running &&
+		echo running || echo not-installed)"
+	printf 'mtproto_firewall=%s\n' "$(
+		nft list ruleset 2>/dev/null |
+			grep -Eq 'tcp dport 1443.*(accept|dnat)' &&
+			echo active || echo missing
+	)"
 	printf 'flow_software=%s\n' "$(uci -q get firewall.@defaults[0].flow_offloading || echo 0)"
 	printf 'flow_hardware=%s\n' "$(uci -q get firewall.@defaults[0].flow_offloading_hw || echo 0)"
 	printf 'safexcel=%s\n' "$(lsmod | grep -q '^crypto_safexcel ' && echo loaded || echo unloaded)"

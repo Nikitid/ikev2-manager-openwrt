@@ -342,7 +342,7 @@ if grep -A5 'set internet_allowed' "$tmp/rules-empty.nft" | grep -Fq 'elements =
 fi
 
 cat >"$tmp/swanctl.raw" <<'EOF'
-list-sa event {ikev2-in {uniqueid=7 state=ESTABLISHED remote-eap-id=alice remote-vips=[10.20.30.15 ] child-sas {net-1 {state=INSTALLED}}}}
+list-sa event {ikev2-in {uniqueid=7 state=ESTABLISHED remote-eap-id=alice remote-vips=[10.20.30.15] child-sas {net-1 {state=INSTALLED}}}}
 EOF
 PATH="$tmp/bin:$PATH" \
 IKEV2_UCI_BIN="$tmp/bin/uci" \

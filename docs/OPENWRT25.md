@@ -43,12 +43,12 @@ ABI.
 - retention of packages still required by unrelated software;
 - exact dnsmasq nftset capability validation;
 - reproducible APK builds with the official OpenWrt 25.12 SDK;
-- a project P-256 release key, signed APKs and signed `packages.adb` indexes;
+- a shared P-256 release key, signed APKs and signed `packages.adb` indexes;
 - a rollback-safe one-time bootstrap for the GitHub Release feed;
 - live validation of preflight, install, doctor, managed enable/disable,
   Reliable mode, PBR rebuild, DNS rollback and guarded dependency removal.
 
-## Signed feed
+## Shared signed feed
 
 The first OpenWrt 25.12 installation uses the bootstrap script:
 
@@ -65,6 +65,13 @@ transaction before installation or upgrade. Release assets are fetched from a
 fixed release while the persistent package feed follows the latest stable
 release through the redirect-free `apk-feed` branch. A failed bootstrap
 restores the previous key/feed state.
+
+The branch is also the stable feed for Overview Manager. It publishes both
+current application APKs in one signed index, the existing
+`ikev2-manager-release.pem`, and the byte-identical
+`nikitid-openwrt-release.pem` alias. Existing repository and key paths remain
+compatible. Feed ownership and publishing are described in
+[Shared APK feed](SHARED_APK_FEED.md).
 
 Older local APK installations can leave an identity-hash constraint in
 `/etc/apk/world`. The bootstrap replaces only that application's constraint

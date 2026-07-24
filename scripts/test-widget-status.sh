@@ -48,6 +48,19 @@ cat >"$tmp/bin/ip" <<'EOF'
 [ "$*" = '-4 route show table pbr_ikev2out' ] &&
 	echo 'unreachable default metric 32767'
 EOF
+cat >"$tmp/bin/nft" <<'EOF'
+#!/bin/sh
+[ "$*" = 'list ruleset' ] || exit 1
+case "${TEST_MTPROTO_FIREWALL:-accept}" in
+	accept) echo 'tcp dport 1443 counter packets 1 bytes 64 accept' ;;
+	dnat) echo 'tcp dport 1443 counter packets 1 bytes 64 dnat ip to 192.0.2.2:1443' ;;
+	missing) echo 'tcp dport 443 counter packets 1 bytes 64 accept' ;;
+esac
+EOF
+cat >"$tmp/bin/lsmod" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
 cat >"$tmp/root/etc/init.d/pbr" <<'EOF'
 #!/bin/sh
 [ "$1" = running ]
@@ -65,6 +78,8 @@ chmod 755 \
 	"$tmp/bin/uci" \
 	"$tmp/bin/swanctl" \
 	"$tmp/bin/ip" \
+	"$tmp/bin/nft" \
+	"$tmp/bin/lsmod" \
 	"$tmp/root/etc/init.d/pbr" \
 	"$tmp/root/usr/libexec/ikev2-domain-router"
 
@@ -123,6 +138,32 @@ do
 		exit 1
 	}
 done
+
+for firewall_mode in accept dnat; do
+	TEST_MTPROTO_FIREWALL="$firewall_mode" \
+	PATH="$tmp/bin:$PATH" \
+	IKEV2_ROOT="$tmp/root" \
+	IKEV2_UCI_BIN="$tmp/bin/uci" \
+	IKEV2_RUNTIME_LIB_DIR="$tmp/root/usr/libexec/ikev2-manager.d" \
+		sh "$repo/luci-ikev2-manager/ikev2-manager.sh" overview \
+		>"$tmp/overview-$firewall_mode"
+	grep -qx 'mtproto_firewall=active' "$tmp/overview-$firewall_mode" || {
+		printf 'MTProto %s firewall rule was not detected\n' "$firewall_mode" >&2
+		exit 1
+	}
+done
+
+TEST_MTPROTO_FIREWALL=missing \
+PATH="$tmp/bin:$PATH" \
+IKEV2_ROOT="$tmp/root" \
+IKEV2_UCI_BIN="$tmp/bin/uci" \
+IKEV2_RUNTIME_LIB_DIR="$tmp/root/usr/libexec/ikev2-manager.d" \
+	sh "$repo/luci-ikev2-manager/ikev2-manager.sh" overview \
+	>"$tmp/overview-missing"
+grep -qx 'mtproto_firewall=missing' "$tmp/overview-missing" || {
+	printf 'missing MTProto firewall rule was reported active\n' >&2
+	exit 1
+}
 
 grep -Fq '"/usr/libexec/ikev2-manager widget-status": [ "exec" ]' \
 	"$repo/luci-ikev2-manager/acl.json"

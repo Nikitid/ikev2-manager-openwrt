@@ -14,13 +14,16 @@ root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 sdk="${OPENWRT_SDK_DIR:-}"
 signing_key="${OPENWRT_APK_SIGNING_KEY:-}"
 release_tag="${OPENWRT_APK_RELEASE_TAG:-}"
+overview_apk="${OPENWRT_OVERVIEW_MANAGER_APK:-}"
 public_key="$root/$OPENWRT_APK_KEY_FILE"
-output="$root/dist/apk-feed"
 
 [ -n "$sdk" ] || fail 'OPENWRT_SDK_DIR is required'
 [ -d "$sdk" ] || fail "SDK directory not found: $sdk"
 [ -n "$signing_key" ] || fail 'OPENWRT_APK_SIGNING_KEY is required'
 [ -r "$signing_key" ] || fail "signing key not readable: $signing_key"
+[ -n "$overview_apk" ] || fail 'OPENWRT_OVERVIEW_MANAGER_APK is required'
+[ -r "$overview_apk" ] ||
+	fail "Overview Manager APK not readable: $overview_apk"
 [ -r "$public_key" ] || fail "public key not found: $public_key"
 
 case "$(basename "$sdk")" in
@@ -72,31 +75,11 @@ package_path="$(find "$sdk/bin/packages" -type f \
 	-name "${PKG_NAME}-${PKG_VERSION}.apk" -print -quit)"
 [ -n "$package_path" ] || fail 'built APK was not found'
 
-rm -rf "$output"
-mkdir -p "$output"
-package_name="${PKG_NAME}-${PKG_VERSION}.apk"
-cp "$package_path" "$output/$package_name"
-
 "$apk_tool" --allow-untrusted adbsign \
-	--sign-key "$signing_key" "$output/$package_name"
-"$apk_tool" --keys-dir "$root/keys" verify "$output/$package_name"
-
-(
-	cd "$output"
-	"$apk_tool" mkndx \
-		--keys-dir "$root/keys" \
-		--sign-key "$signing_key" \
-		--description 'IKEv2 Manager for OpenWrt 25.12' \
-		--output packages.adb \
-		"$package_name"
-)
-"$apk_tool" --keys-dir "$root/keys" verify "$output/packages.adb"
+	--sign-key "$signing_key" "$package_path"
+"$apk_tool" --keys-dir "$root/keys" verify "$package_path"
 "$apk_tool" --keys-dir "$root/keys" adbdump --format json \
-	"$output/packages.adb" >"$tmp/packages.json"
-grep -q "${PKG_NAME}" "$tmp/packages.json" ||
-	fail 'generated index does not contain the package'
-"$apk_tool" --keys-dir "$root/keys" adbdump --format json \
-	"$output/$package_name" >"$tmp/package.json"
+	"$package_path" >"$tmp/package.json"
 python3 - "$tmp/package.json" >"$tmp/pre-deinstall" <<'PY'
 import json
 import sys
@@ -119,20 +102,9 @@ if grep -Fq '/etc/init.d/rpcd restart' "$tmp/pre-deinstall"; then
 	fail 'built APK restarts rpcd during its package transaction'
 fi
 
-cp "$public_key" "$output/ikev2-manager-release.pem"
-release_base="$OPENWRT_APK_RELEASE_BASE"
-if [ -n "$release_tag" ]; then
-	case "$release_tag" in *[!A-Za-z0-9._-]*) fail 'invalid APK release tag' ;; esac
-	release_base="https://github.com/Nikitid/ikev2-manager-openwrt/releases/download/$release_tag"
-fi
-sed "s|^OPENWRT_APK_RELEASE_BASE=https://.*|OPENWRT_APK_RELEASE_BASE=$release_base|" \
-	"$root/scripts/install-openwrt25.sh" >"$output/install-openwrt25.sh"
-chmod 0755 "$output/install-openwrt25.sh"
-(
-	cd "$output"
-	sha256sum "$package_name" packages.adb ikev2-manager-release.pem \
-		install-openwrt25.sh >SHA256SUMS.apk
-	sha256sum -c SHA256SUMS.apk
-)
+OPENWRT_IKEV2_APK="$package_path" \
+OPENWRT_OVERVIEW_MANAGER_APK="$overview_apk" \
+OPENWRT_APK_RELEASE_TAG="$release_tag" \
+	"$root/scripts/assemble-shared-apk-feed.sh"
 
-printf 'APK feed built in %s\n' "$output"
+printf 'APK feed built in %s\n' "$root/dist/apk-feed"

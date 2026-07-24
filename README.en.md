@@ -63,10 +63,12 @@ wget -O /tmp/install-ikev2-manager.sh \
 sh /tmp/install-ikev2-manager.sh
 ```
 
-The installer verifies the release public key and registers a signed stable APK
-repository without redirects. If the application was installed before version
-`1.1.9`, run these two commands once more: the installer upgrades the package
-and moves the existing installation to the stable repository.
+The installer verifies the release public key and registers the shared signed
+stable APK repository for Nikitid OpenWrt applications without redirects. The
+legacy key and `/etc/apk/repositories.d/ikev2-manager.list` path remain
+compatible. If the application was installed before version `1.1.9`, run these
+two commands once more: the installer upgrades the package and moves the
+existing installation to the stable repository.
 
 Later updates:
 
@@ -74,6 +76,8 @@ Later updates:
 apk update
 apk upgrade luci-app-ikev2-manager
 ```
+
+This upgrades only IKEv2 Manager, not all system packages.
 
 ## Policy routing
 
@@ -103,6 +107,7 @@ Artifacts are written to `dist/`.
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Operations](docs/OPERATIONS.md)
+- [Shared APK feed](docs/SHARED_APK_FEED.md)
 - [Security](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)

@@ -29,6 +29,8 @@ node ./scripts/test-luci-status-widget.js
 ./scripts/test-dependency-state.sh
 ./scripts/test-device-state.sh
 ./scripts/test-apk-bootstrap.sh
+./scripts/test-download-release-apk.sh
+./scripts/test-shared-apk-feed.sh
 ./scripts/test-dns-regressions.sh
 ./scripts/test-community-domains.sh
 ./scripts/test-discord-voice-routing.sh
