@@ -2013,6 +2013,58 @@ package_installed() {
 	fi
 }
 
+widget_status() {
+	count_lines() {
+		[ -r "$1" ] &&
+			awk 'NF && $1 !~ /^#/ { n++ } END { print n + 0 }' "$1" ||
+			echo 0
+	}
+	domain_status=''
+	if [ -x "$root/usr/libexec/ikev2-domain-router" ]; then
+		domain_status="$("$root/usr/libexec/ikev2-domain-router" status 2>/dev/null || true)"
+	fi
+	configured="$(getv globals configured)"
+	[ -n "$configured" ] || configured=0
+
+	printf 'health=%s\n' \
+		"$(sed -n 's/^state=\([^ ]*\).*/\1/p' "$root/var/run/ikev2-health.status" 2>/dev/null || echo unknown)"
+	printf 'configured=%s\n' "$configured"
+	printf 'pbr=%s\n' \
+		"$([ -x "$root/etc/init.d/pbr" ] &&
+			"$root/etc/init.d/pbr" running && echo running || echo stopped)"
+	printf 'client_enabled=%s\n' "$(getv client enabled)"
+	printf 'server_enabled=%s\n' "$(getv server enabled)"
+	if [ -d "$root/sys/class/net/ipsec-out" ]; then
+		printf 'interface_present=1\n'
+	else
+		printf 'interface_present=0\n'
+	fi
+	printf 'interface_bytes_in=%s\n' "$(interface_counter ipsec-out rx_bytes)"
+	printf 'interface_bytes_out=%s\n' "$(interface_counter ipsec-out tx_bytes)"
+	printf 'inbound_conn_loaded=%s\n' \
+		"$(swanctl --list-conns 2>/dev/null |
+			grep -q 'ikev2-in:' && echo 1 || echo 0)"
+	printf 'inbound_pool_loaded=%s\n' \
+		"$(swanctl --list-pools 2>/dev/null |
+			grep -q 'router_pool4' && echo 1 || echo 0)"
+	printf 'pbr_domains=%s\n' "$(count_lines "$root/etc/pbr-ikev2-domains.txt")"
+	printf 'manual_addresses=%s\n' \
+		"$(count_lines "$root/etc/pbr-ikev2-addresses.manual.txt")"
+	printf 'community_services=%s\n' \
+		"$(count_lines "$root/etc/pbr-ikev2-community-selected.txt")"
+	printf 'killswitch=%s\n' "$(ip -4 route show table pbr_ikev2out 2>/dev/null |
+		grep -Eq '^unreachable default( |$)' && echo active || echo missing)"
+	for field in engine service healthy state; do
+		if [ "$field" = engine ]; then
+			value="$(getv domains engine)"
+		else
+			value="$(printf '%s\n' "$domain_status" |
+				sed -n "s/^$field=//p" | tail -n1)"
+		fi
+		printf 'domain_%s=%s\n' "$field" "$value"
+	done
+}
+
 overview() {
 	cert="$root/etc/swanctl/x509/ikev2.pem"
 	count_lines() {
@@ -2373,6 +2425,9 @@ run_action() {
 case "${1:-}" in
 	overview)
 		overview
+		;;
+	widget-status)
+		widget_status
 		;;
 	users)
 		cut -f1 "$users_db"

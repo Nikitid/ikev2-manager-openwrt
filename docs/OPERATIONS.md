@@ -133,6 +133,29 @@ Policy allow entries have a short timeout and are refreshed by the health
 watcher. Deleting a user or losing the identity-to-address mapping therefore
 fails closed. Custom inbound profiles do not use the managed per-user policy.
 
+## Status Overview widget
+
+The package installs `06_ikev2-manager.js` in the LuCI Status Overview include
+directory, before the standard system widgets that start at `10`. Its three
+summary blocks cover the outbound tunnel, policy routing and inbound server.
+They report live outbound SA state, PBR/domain-routing and fail-closed state,
+policy counts, inbound-server readiness and the active inbound-session count.
+The outbound traffic counters are the accumulated `ipsec-out` interface RX/TX
+totals and survive CHILD_SA rekeys; they reset when the interface is recreated.
+
+Detailed inbound rows are rendered only for established `ikev2-in` sessions
+with an installed CHILD_SA. Each row contains the EAP identity, assigned VPN
+address, current connection duration and traffic counters from the client's
+perspective. Offline accounts and incomplete IKE handshakes are omitted.
+`ikev2-manager widget-status` supplies the inexpensive read-only project
+summary; `swanmon list-sas` supplies live SA state.
+
+Overview discovers widget files automatically and sorts them lexicographically,
+so the numeric filename prefix controls the router-wide order. The page's
+Show/Hide control stores visibility in browser local storage for the current
+browser profile; it does not change UCI or package configuration. This LuCI
+page does not provide drag-and-drop reordering.
+
 ## Background actions
 
 Long LuCI operations continue in serialized workers:

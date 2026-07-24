@@ -18,6 +18,7 @@
 				"/usr/libexec/ikev2-domains-community status *": [ "exec" ],
 				"/usr/libexec/ikev2-domain-router status": [ "exec" ],
 				"/usr/libexec/ikev2-manager users-show": [ "exec" ],
+				"/usr/libexec/ikev2-manager widget-status": [ "exec" ],
 				"/usr/libexec/ikev2-manager server-get": [ "exec" ],
 				"/usr/libexec/ikev2-manager server-access-get": [ "exec" ],
 				"/usr/libexec/ikev2-manager acme-get": [ "exec" ],

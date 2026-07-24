@@ -534,6 +534,33 @@ var ru = {
 	'Sent %s': 'Отправлено %s',
 	'No active sessions': 'Нет активных подключений',
 	'%d active sessions': '%d активных подключений',
+	'Inbound session data is unavailable.': 'Данные входящих подключений недоступны.',
+	'Address unavailable': 'Адрес недоступен',
+	'Project status': 'Состояние проекта',
+	'Project status is unavailable.': 'Состояние проекта недоступно.',
+	'Operational': 'Работает штатно',
+	'Unavailable': 'Недоступно',
+	'Outbound client is disabled.': 'Исходящий VPN-клиент выключен.',
+	'Connection state is unavailable.': 'Состояние подключения недоступно.',
+	'Routing state is unavailable.': 'Состояние маршрутизации недоступно.',
+	'Server state is unavailable.': 'Состояние сервера недоступно.',
+	'No installed outbound CHILD_SA.': 'Нет установленного исходящего CHILD_SA.',
+	'Downloaded': 'Получено',
+	'Uploaded': 'Отправлено',
+	'Policy routing': 'Политика маршрутизации',
+	'Managed routing is disabled.': 'Управляемая маршрутизация выключена.',
+	'PBR running': 'PBR работает',
+	'PBR stopped': 'PBR остановлен',
+	'Fail-closed active': 'Fail-closed активен',
+	'Fail-closed missing': 'Fail-closed отсутствует',
+	'%d service groups': 'наборов сервисов: %d',
+	'%d address rules': 'правил адресов: %d',
+	'Inbound server': 'Входящий сервер',
+	'Inbound server is disabled.': 'Входящий сервер выключен.',
+	'Server ready': 'Сервер готов',
+	'Server degraded': 'Сервер работает со сбоем',
+	'Active inbound clients': 'Активные входящие клиенты',
+	'Open IKEv2 Manager': 'Открыть IKEv2 Manager',
 	'Key checks': 'Основные проверки',
 	'Show %d more diagnostic checks': 'Показать остальные проверки (%d)',
 	'Operation failed': 'Операция не удалась',
@@ -1308,6 +1335,109 @@ function styles() {
 				flex-wrap: wrap;
 				gap: .45rem;
 			}
+			.ikev2-status-widget { display: grid; gap: .75rem; }
+			.ikev2-widget-summary {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: .75rem;
+			}
+			.ikev2-widget-summary-label {
+				color: var(--ikev2-muted);
+				font-size: .78rem;
+				font-weight: 650;
+				letter-spacing: .05em;
+				text-transform: uppercase;
+			}
+			.ikev2-widget-overview {
+				display: grid;
+				grid-template-columns: repeat(3, minmax(0, 1fr));
+				gap: .65rem;
+			}
+			.ikev2-widget-component {
+				display: flex;
+				flex-direction: column;
+				min-width: 0;
+				padding: .82rem .85rem;
+				border: 1px solid var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				background: var(--ikev2-surface-2);
+			}
+			.ikev2-widget-component-label {
+				margin-bottom: .5rem;
+				color: var(--ikev2-muted);
+				font-size: .7rem;
+				font-weight: 650;
+				letter-spacing: .06em;
+				text-transform: uppercase;
+			}
+			.ikev2-widget-component-head {
+				display: flex;
+				align-items: center;
+				min-height: 1.65rem;
+			}
+			.ikev2-widget-component-detail {
+				margin-top: .48rem;
+				color: var(--ikev2-muted);
+				font-size: .82rem;
+				line-height: 1.4;
+			}
+			.ikev2-widget-component-meta {
+				display: flex;
+				align-items: center;
+				flex-wrap: wrap;
+				gap: .35rem .7rem;
+				margin-top: auto;
+				padding-top: .52rem;
+				color: var(--ikev2-muted);
+				font-size: .78rem;
+			}
+			.ikev2-widget-component-meta .ikev2-traffic {
+				color: var(--ikev2-muted);
+			}
+			.ikev2-widget-clients {
+				display: grid;
+				gap: .55rem;
+				padding-top: .15rem;
+			}
+			.ikev2-widget-clients-head {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: .75rem;
+			}
+			.ikev2-widget-client-list { display: grid; gap: .55rem; }
+			.ikev2-widget-client {
+				display: grid;
+				grid-template-columns: minmax(10rem, 1fr) auto auto;
+				align-items: center;
+				gap: .75rem 1rem;
+				padding: .72rem .8rem;
+				border: 1px solid var(--ikev2-border);
+				border-radius: var(--ikev2-radius-sm);
+				background: var(--ikev2-surface-2);
+			}
+			.ikev2-widget-client-name { min-width: 0; }
+			.ikev2-widget-address,
+			.ikev2-widget-duration {
+				color: var(--ikev2-muted);
+				font-size: .82rem;
+			}
+			.ikev2-widget-address {
+				display: block;
+				overflow-wrap: anywhere;
+			}
+			.ikev2-widget-duration { white-space: nowrap; }
+			.ikev2-widget-traffic {
+				display: inline-flex;
+				align-items: center;
+				justify-content: flex-end;
+				gap: .65rem;
+			}
+			.ikev2-widget-footer {
+				display: flex;
+				justify-content: flex-end;
+			}
 
 			/* ── Notes ──────────────────────────────────────────────── */
 			.ikev2-note {
@@ -1970,6 +2100,7 @@ function styles() {
 				.ikev2-card.wide { grid-column: 1 / -1; }
 				.ikev2-hero { grid-template-columns: 1fr; }
 				.ikev2-hero-side { flex-direction: row; flex-wrap: wrap; }
+				.ikev2-widget-overview { grid-template-columns: 1fr; }
 				.ikev2-user-card {
 					grid-template-columns: minmax(10rem, .8fr) minmax(16rem, 1.4fr);
 				}
@@ -1990,6 +2121,9 @@ function styles() {
 				.ikev2-user-card { grid-template-columns: 1fr; }
 				.ikev2-user-actions { grid-column: auto; justify-content: flex-start; }
 				.ikev2-session { align-items: flex-start; flex-direction: column; }
+				.ikev2-widget-client { grid-template-columns: 1fr auto; }
+				.ikev2-widget-duration { grid-column: 1; }
+				.ikev2-widget-traffic { grid-column: 2; grid-row: 1 / span 2; }
 				.ikev2-engine-head { align-items: stretch; flex-direction: column; }
 				.ikev2-engine-action { justify-content: flex-start; }
 				.ikev2-engine-action .cbi-button { width: 100%; min-width: 0; }

@@ -18,6 +18,8 @@ remote gateway.
 - FakeIP/TProxy domain routing and fail-closed PBR;
 - inbound IKEv2/EAP server with global and per-user access to the router,
   selected public router ports, Internet and selected local IPv4 destinations;
+- Status Overview widget for the outbound tunnel, PBR and active inbound VPN
+  clients;
 - DNS upstream over UDP, TCP, DoT, DoH, HTTP/3, DoQ or DNSCrypt;
 - ACME and Russian/English LuCI interfaces.
 

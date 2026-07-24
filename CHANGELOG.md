@@ -2,8 +2,12 @@
 
 This project follows semantic versioning for the application and release tags.
 
-## Unreleased
+## 1.2.0 - 2026-07-24
 
+- Added a Status Overview widget summarizing outbound tunnel connectivity and
+  accumulated interface traffic, PBR/domain-routing and fail-closed health,
+  inbound-server readiness, and established inbound clients. It is placed
+  before the standard system widgets.
 - Added per-user inbound access policies with global inheritance, router and
   Internet overrides, full or IPv4/CIDR-limited local access, and optional PBR
   exclusion through direct WAN.

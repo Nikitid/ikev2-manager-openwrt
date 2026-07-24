@@ -71,6 +71,8 @@ done
 install_file 644 luci-ikev2-manager/menu.json /usr/share/luci/menu.d/luci-app-ikev2-manager.json
 install_file 644 luci-ikev2-manager/acl.json /usr/share/rpcd/acl.d/luci-app-ikev2-manager.json
 install_file 644 luci-ikev2-manager/shared.js /www/luci-static/resources/ikev2-manager/shared.js
+install_file 644 luci-ikev2-manager/status-widget.js \
+	/www/luci-static/resources/view/status/include/06_ikev2-manager.js
 for view in setup users settings client; do
 	install_file 644 "luci-ikev2-manager/$view.js" \
 		"/www/luci-static/resources/view/ikev2-manager/$view.js"

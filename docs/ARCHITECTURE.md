@@ -162,3 +162,11 @@ Raw strongSwan profile overrides are validated, installed atomically and rolled
 back when loading fails. Per-user policies remain stored but are not enforced
 while a custom inbound profile is active. Credentials remain managed
 separately.
+
+The LuCI Status Overview include combines the lightweight, read-only
+`ikev2-manager widget-status` summary with `swanmon list-sas`. It reports
+outbound SA state, accumulated `ipsec-out` interface traffic, PBR/domain-routing
+and fail-closed state, inbound-server readiness and active inbound sessions.
+Detailed client rows are rendered only for established inbound SAs that have an
+installed CHILD_SA, so configured but offline users and incomplete handshakes
+do not consume dashboard space. The widget does not mutate runtime state.

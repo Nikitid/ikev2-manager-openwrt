@@ -18,6 +18,8 @@ find luci-ikev2-domains luci-ikev2-manager \
 
 ./scripts/check-luci-ui-contract.sh
 node ./scripts/test-luci-users-ui.js
+node ./scripts/test-luci-status-widget.js
+./scripts/test-widget-status.sh
 
 ./scripts/test-package-lifecycle.sh
 

@@ -13,6 +13,8 @@ grep -Fq '[ "$${PKG_UPGRADE:-0}" = 1 ] && exit 0' "$makefile"
 grep -Fq 'upgrade) exit 0 ;;' "$makefile"
 grep -Fq 'rm -f /tmp/ikev2-manager-dhcp.before-deps' "$makefile"
 grep -Fq 'rm -rf /tmp/ikev2-manager-dns-packages' "$makefile"
+grep -Fq '/www/luci-static/resources/view/status/include/06_ikev2-manager.js' \
+	"$makefile" "$root/scripts/stage-package.sh"
 
 if sed -n '/case "$${1:-}" in/,/esac/p' "$makefile" |
 	grep -Fq '*) exit 0'; then

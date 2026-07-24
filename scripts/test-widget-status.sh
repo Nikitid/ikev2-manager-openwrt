@@ -1,0 +1,130 @@
+#!/bin/sh
+
+set -eu
+
+repo="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT INT TERM
+
+mkdir -p \
+	"$tmp/root/etc/config" \
+	"$tmp/root/etc/ikev2-manager" \
+	"$tmp/root/etc/init.d" \
+	"$tmp/root/sys/class/net/ipsec-out/statistics" \
+	"$tmp/root/usr/libexec/ikev2-manager.d" \
+	"$tmp/root/var/run" \
+	"$tmp/bin"
+cp "$repo/ikev2-manager-runtime/lib/actions.sh" \
+	"$tmp/root/usr/libexec/ikev2-manager.d/actions.sh"
+
+cat >"$tmp/bin/uci" <<'EOF'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-c) shift 2 ;;
+		-q) shift ;;
+		get) shift; break ;;
+		*) shift ;;
+	esac
+done
+case "${1:-}" in
+	ikev2-manager.globals.configured) echo 1 ;;
+	ikev2-manager.client.enabled) echo 1 ;;
+	ikev2-manager.server.enabled) echo 1 ;;
+	ikev2-manager.domains.engine) echo fakeip ;;
+	*) exit 0 ;;
+esac
+EOF
+cat >"$tmp/bin/swanctl" <<'EOF'
+#!/bin/sh
+case "$1" in
+	--list-conns) echo 'ikev2-in: IKEv2' ;;
+	--list-pools) echo 'router_pool4' ;;
+	*) exit 1 ;;
+esac
+EOF
+cat >"$tmp/bin/ip" <<'EOF'
+#!/bin/sh
+[ "$*" = '-4 route show table pbr_ikev2out' ] &&
+	echo 'unreachable default metric 32767'
+EOF
+cat >"$tmp/root/etc/init.d/pbr" <<'EOF'
+#!/bin/sh
+[ "$1" = running ]
+EOF
+cat >"$tmp/root/usr/libexec/ikev2-domain-router" <<'EOF'
+#!/bin/sh
+[ "$1" = status ] || exit 1
+cat <<'STATUS'
+service=running
+healthy=yes
+state=active
+STATUS
+EOF
+chmod 755 \
+	"$tmp/bin/uci" \
+	"$tmp/bin/swanctl" \
+	"$tmp/bin/ip" \
+	"$tmp/root/etc/init.d/pbr" \
+	"$tmp/root/usr/libexec/ikev2-domain-router"
+
+cat >"$tmp/root/var/run/ikev2-health.status" <<'EOF'
+state=up failures=0
+EOF
+printf '%s\n' 123456 >"$tmp/root/sys/class/net/ipsec-out/statistics/rx_bytes"
+printf '%s\n' 654321 >"$tmp/root/sys/class/net/ipsec-out/statistics/tx_bytes"
+cat >"$tmp/root/etc/pbr-ikev2-domains.txt" <<'EOF'
+# generated
+example.com
+example.net
+EOF
+cat >"$tmp/root/etc/pbr-ikev2-addresses.manual.txt" <<'EOF'
+203.0.113.0/24
+EOF
+cat >"$tmp/root/etc/pbr-ikev2-community-selected.txt" <<'EOF'
+discord
+telegram
+EOF
+
+if ! PATH="$tmp/bin:$PATH" \
+	IKEV2_ROOT="$tmp/root" \
+	IKEV2_UCI_BIN="$tmp/bin/uci" \
+	IKEV2_RUNTIME_LIB_DIR="$tmp/root/usr/libexec/ikev2-manager.d" \
+		sh "$repo/luci-ikev2-manager/ikev2-manager.sh" widget-status \
+		>"$tmp/status" 2>"$tmp/error"
+then
+	cat "$tmp/error" >&2
+	exit 1
+fi
+
+for expected in \
+	'health=up' \
+	'configured=1' \
+	'pbr=running' \
+	'client_enabled=1' \
+	'server_enabled=1' \
+	'interface_present=1' \
+	'interface_bytes_in=123456' \
+	'interface_bytes_out=654321' \
+	'inbound_conn_loaded=1' \
+	'inbound_pool_loaded=1' \
+	'pbr_domains=2' \
+	'manual_addresses=1' \
+	'community_services=2' \
+	'killswitch=active' \
+	'domain_engine=fakeip' \
+	'domain_service=running' \
+	'domain_healthy=yes' \
+	'domain_state=active'
+do
+	grep -qx "$expected" "$tmp/status" || {
+		printf 'missing widget status field: %s\n' "$expected" >&2
+		cat "$tmp/status" >&2
+		exit 1
+	}
+done
+
+grep -Fq '"/usr/libexec/ikev2-manager widget-status": [ "exec" ]' \
+	"$repo/luci-ikev2-manager/acl.json"
+
+printf '%s\n' 'status widget runtime tests OK'
